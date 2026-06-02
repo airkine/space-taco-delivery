@@ -11,6 +11,8 @@ app/
 ├── cmd/server/main.go          # Entry point — wires up server, routes, graceful shutdown
 ├── internal/
 │   ├── handler/handler.go      # HTTP handlers
+│   ├── handler/ui.go           # Embeds and serves the browser UI
+│   ├── handler/ui.html         # Single-page UI (space theme, vanilla JS)
 │   ├── model/order.go          # Domain types: Order, TacoItem, MenuItem, request/response structs
 │   └── store/memory.go         # In-memory store (thread-safe, seeded with sample orders)
 ├── Dockerfile                  # Multi-stage build → distroless final image
@@ -21,6 +23,7 @@ app/
 
 | Method | Path | Description |
 |--------|------|-------------|
+| `GET` | `/` | Browser UI (menu, order form, order tracker) |
 | `GET` | `/healthz` | Liveness probe |
 | `GET` | `/readyz` | Readiness probe |
 | `GET` | `/api/v1/menu` | List available taco fillings |
@@ -36,6 +39,29 @@ Orders move through these statuses: `received` → `preparing` → `launched` �
 ### Data store
 
 `MemoryStore` is an in-memory, mutex-protected map. It seeds two orders on startup so the API returns data immediately. Data does not persist across restarts — this is intentional for local dev and testing.
+
+---
+
+## Docker Compose
+
+The fastest way to build and run the app locally is from the **repo root**:
+
+```bash
+docker compose up --build
+```
+
+This builds the image and starts two services:
+
+| Service | Port | Notes |
+|---------|------|-------|
+| `space-taco` | `8080` | Go app, built from `app/Dockerfile` |
+| `redis` | `6379` | Redis 7; app connects via `REDIS_URL` |
+
+The app waits for Redis to pass its healthcheck before starting. To run without Redis (MemoryStore only), omit the `REDIS_URL` environment variable or set it to empty.
+
+```bash
+docker compose down   # stop and remove containers
+```
 
 ---
 

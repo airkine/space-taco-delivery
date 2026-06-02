@@ -80,7 +80,23 @@ A fully production-patterned microservice demonstrating GitOps best practices:
 
 ## Local Development
 
-### Prerequisites
+### Docker Compose (fastest path)
+
+Builds the image locally and starts the app alongside Redis:
+
+```bash
+docker compose up --build
+```
+
+The app is available at `http://localhost:8080`. Redis runs on `localhost:6379` with the cache layer enabled (`REDIS_URL` is set automatically).
+
+To stop and clean up:
+
+```bash
+docker compose down
+```
+
+### Prerequisites (kind cluster)
 
 ```bash
 # Install required tools
@@ -179,6 +195,7 @@ cosign download sbom \
 
 | Method | Path | Description |
 |---|---|---|
+| `GET` | `/` | Browser UI — menu, order form, order tracker |
 | `GET` | `/healthz` | Liveness probe |
 | `GET` | `/readyz` | Readiness probe |
 | `GET` | `/api/v1/menu` | Galactic taco menu |

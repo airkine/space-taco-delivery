@@ -1,8 +1,9 @@
 module github.com/your-org/space-taco-delivery
 
-go 1.22
+go 1.24
 
 require (
-	// Standard library only — no external deps for the core app
-	// keeping it lean for intergalactic travel
+	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/redis/go-redis/v9 v9.20.0 // indirect
+	go.uber.org/atomic v1.11.0 // indirect
 )

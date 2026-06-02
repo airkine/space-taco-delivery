@@ -1,0 +1,697 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🌮 Space Taco Delivery</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Boogaloo&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg:          #070714;
+      --bg-card:     rgba(18, 18, 48, 0.72);
+      --border:      rgba(140, 90, 255, 0.2);
+      --purple:      #a855f7;
+      --purple-glow: rgba(168, 85, 247, 0.4);
+      --cyan:        #22d3ee;
+      --cyan-glow:   rgba(34, 211, 238, 0.35);
+      --orange:      #fb923c;
+      --pink:        #f472b6;
+      --green:       #4ade80;
+      --yellow:      #facc15;
+      --red:         #f87171;
+      --text:        #e2e8f0;
+      --muted:       #94a3b8;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Space Grotesk', sans-serif;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ── Starfield ───────────────────────────────────────── */
+    #stars {
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+    }
+    .star {
+      position: absolute;
+      border-radius: 50%;
+      background: #fff;
+      animation: twinkle var(--d, 3s) var(--t, 0s) infinite ease-in-out;
+    }
+    @keyframes twinkle {
+      0%, 100% { opacity: 0.15; transform: scale(1); }
+      50%       { opacity: 1;    transform: scale(1.4); }
+    }
+
+    /* Nebula blobs */
+    body::before, body::after {
+      content: '';
+      position: fixed;
+      border-radius: 50%;
+      filter: blur(120px);
+      pointer-events: none;
+      z-index: 0;
+    }
+    body::before {
+      width: 600px; height: 600px;
+      background: rgba(168,85,247,0.07);
+      top: -200px; left: -200px;
+    }
+    body::after {
+      width: 500px; height: 500px;
+      background: rgba(34,211,238,0.06);
+      bottom: -150px; right: -150px;
+    }
+
+    /* ── Layout ──────────────────────────────────────────── */
+    #app {
+      position: relative;
+      z-index: 1;
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 0 1.5rem 5rem;
+    }
+
+    /* ── Header ──────────────────────────────────────────── */
+    header {
+      text-align: center;
+      padding: 3.5rem 1rem 2.5rem;
+    }
+    .header-taco {
+      font-size: 4rem;
+      display: inline-block;
+      animation: float 4s ease-in-out infinite;
+      filter: drop-shadow(0 0 24px rgba(251,146,60,0.6));
+    }
+    @keyframes float {
+      0%, 100% { transform: translateY(0) rotate(-5deg); }
+      50%       { transform: translateY(-14px) rotate(5deg); }
+    }
+    header h1 {
+      font-family: 'Boogaloo', cursive;
+      font-size: clamp(2.6rem, 7vw, 5rem);
+      background: linear-gradient(135deg, var(--purple) 0%, var(--cyan) 50%, var(--orange) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      filter: drop-shadow(0 0 30px var(--purple-glow));
+      line-height: 1.1;
+      margin: 0.4rem 0 0.6rem;
+    }
+    header p {
+      color: var(--muted);
+      font-size: 0.95rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    /* ── Section headers ─────────────────────────────────── */
+    .sh {
+      display: flex;
+      align-items: center;
+      gap: 0.9rem;
+      margin-bottom: 1.5rem;
+    }
+    .sh h2 {
+      font-family: 'Boogaloo', cursive;
+      font-size: 1.75rem;
+      white-space: nowrap;
+      color: var(--cyan);
+      text-shadow: 0 0 18px var(--cyan-glow);
+    }
+    .sh-line {
+      flex: 1;
+      height: 1px;
+      background: linear-gradient(90deg, rgba(140,90,255,0.3), transparent);
+    }
+    section { margin-bottom: 3.5rem; }
+
+    /* ── Cards ───────────────────────────────────────────── */
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 1.25rem;
+      padding: 1.4rem;
+      backdrop-filter: blur(14px);
+      transition: transform 0.22s ease, border-color 0.22s ease, box-shadow 0.22s ease;
+    }
+    .card:hover {
+      transform: translateY(-4px);
+      border-color: rgba(168,85,247,0.5);
+      box-shadow: 0 8px 36px var(--purple-glow);
+    }
+
+    /* ── Menu grid ───────────────────────────────────────── */
+    #menu-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 1.2rem;
+    }
+    .menu-card { display: flex; flex-direction: column; gap: 0.7rem; }
+    .menu-emoji { font-size: 2.6rem; line-height: 1; filter: drop-shadow(0 2px 8px rgba(0,0,0,.4)); }
+    .menu-name  { font-weight: 700; font-size: 0.97rem; }
+    .menu-desc  { font-size: 0.78rem; color: var(--muted); line-height: 1.45; flex: 1; }
+    .spice      { font-size: 0.8rem; }
+    .counter {
+      display: flex;
+      align-items: center;
+      gap: 0.7rem;
+      margin-top: auto;
+    }
+    .counter button {
+      width: 1.9rem; height: 1.9rem;
+      border-radius: 50%;
+      border: 1px solid var(--purple);
+      background: rgba(168,85,247,0.12);
+      color: var(--purple);
+      font-size: 1.1rem;
+      cursor: pointer;
+      transition: all 0.15s;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .counter button:hover { background: var(--purple); color: #fff; box-shadow: 0 0 14px var(--purple-glow); }
+    .qty { font-size: 1.1rem; font-weight: 700; min-width: 1.4rem; text-align: center; }
+    .hot-toggle {
+      display: flex; align-items: center; gap: 0.4rem;
+      font-size: 0.78rem; color: var(--muted);
+      cursor: pointer; user-select: none;
+      transition: color 0.15s;
+    }
+    .hot-toggle input { accent-color: var(--orange); cursor: pointer; }
+    .hot-toggle.on { color: var(--orange); }
+
+    /* ── Order form ──────────────────────────────────────── */
+    #form-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.4rem;
+    }
+    @media (max-width: 660px) { #form-grid { grid-template-columns: 1fr; } }
+
+    .fg { display: flex; flex-direction: column; gap: 0.38rem; }
+    .fg label {
+      font-size: 0.74rem; font-weight: 600;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--muted);
+    }
+    .fg input {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--border);
+      border-radius: 0.6rem;
+      padding: 0.62rem 0.9rem;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.93rem;
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .fg input:focus {
+      border-color: var(--purple);
+      box-shadow: 0 0 0 3px var(--purple-glow);
+    }
+    .fg input::placeholder { color: var(--muted); }
+
+    #cart-section { grid-column: 1 / -1; }
+    #cart-section h3 {
+      font-size: 0.74rem; font-weight: 600;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--muted); margin-bottom: 0.65rem;
+    }
+    #cart-chips { display: flex; flex-wrap: wrap; gap: 0.45rem; min-height: 2.4rem; }
+    .chip {
+      display: inline-flex; align-items: center; gap: 0.3rem;
+      border-radius: 999px; padding: 0.28rem 0.75rem;
+      font-size: 0.8rem; border: 1px solid var(--purple);
+      background: rgba(168,85,247,0.12); color: var(--purple);
+    }
+    .chip.hot { border-color: var(--orange); background: rgba(251,146,60,0.12); color: var(--orange); }
+    .empty-msg { font-size: 0.87rem; color: var(--muted); font-style: italic; }
+
+    #launch-btn {
+      grid-column: 1 / -1;
+      padding: 0.9rem 2rem;
+      font-family: 'Boogaloo', cursive;
+      font-size: 1.3rem; letter-spacing: 0.04em;
+      background: linear-gradient(135deg, #7c3aed, var(--cyan));
+      color: #fff; border: none; border-radius: 0.75rem;
+      cursor: pointer;
+      transition: opacity 0.2s, transform 0.15s, box-shadow 0.2s;
+      box-shadow: 0 4px 24px var(--purple-glow);
+    }
+    #launch-btn:hover:not(:disabled) { opacity: 0.9; transform: translateY(-2px); box-shadow: 0 10px 36px var(--purple-glow); }
+    #launch-btn:active:not(:disabled) { transform: translateY(0); }
+    #launch-btn:disabled { opacity: 0.38; cursor: not-allowed; }
+
+    /* ── Tracker ─────────────────────────────────────────── */
+    .tracker-header {
+      display: flex; align-items: center; gap: 0.9rem;
+      margin-bottom: 1.5rem;
+    }
+    .tracker-header .sh-line { flex: 1; }
+    #refresh-btn {
+      background: rgba(34,211,238,0.08);
+      border: 1px solid var(--cyan);
+      color: var(--cyan); border-radius: 0.5rem;
+      padding: 0.38rem 0.85rem;
+      font-family: inherit; font-size: 0.83rem;
+      cursor: pointer; transition: all 0.15s; white-space: nowrap;
+    }
+    #refresh-btn:hover { background: rgba(34,211,238,0.18); box-shadow: 0 0 14px var(--cyan-glow); }
+
+    #orders-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
+      gap: 1.2rem;
+    }
+    .order-card { display: flex; flex-direction: column; gap: 0.8rem; }
+    .order-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.5rem; }
+    .order-id {
+      font-family: 'Boogaloo', cursive; font-size: 1.15rem;
+      color: var(--purple); text-shadow: 0 0 10px var(--purple-glow);
+    }
+    .badge {
+      display: inline-block; padding: 0.25rem 0.72rem;
+      border-radius: 999px; font-size: 0.76rem; font-weight: 600;
+      letter-spacing: 0.04em; white-space: nowrap;
+    }
+    .b-received  { background: rgba(34,211,238,.13);  color: var(--cyan);   border: 1px solid var(--cyan); }
+    .b-preparing { background: rgba(251,146,60,.13);  color: var(--orange); border: 1px solid var(--orange); }
+    .b-launched  { background: rgba(168,85,247,.13);  color: var(--purple); border: 1px solid var(--purple); }
+    .b-in_orbit  { background: rgba(250,204,21,.13);  color: var(--yellow); border: 1px solid var(--yellow); }
+    .b-delivered { background: rgba(74,222,128,.13);  color: var(--green);  border: 1px solid var(--green); }
+    .b-aborted   { background: rgba(248,113,113,.13); color: var(--red);    border: 1px solid var(--red); }
+
+    .order-meta { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+    .meta {
+      font-size: 0.78rem; color: var(--muted);
+      background: rgba(255,255,255,0.05);
+      border-radius: 999px; padding: 0.18rem 0.55rem;
+    }
+    .order-items { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+
+    .progress-bar { display: flex; gap: 0.2rem; }
+    .ps {
+      flex: 1; height: 4px; border-radius: 2px;
+      background: rgba(255,255,255,0.08);
+      transition: background 0.3s;
+    }
+    .ps.done    { background: var(--purple); box-shadow: 0 0 6px var(--purple-glow); }
+    .ps.current { background: var(--cyan);   box-shadow: 0 0 6px var(--cyan-glow); }
+    .ps.aborted { background: var(--red); }
+
+    .actions { display: flex; flex-wrap: wrap; gap: 0.45rem; }
+    .act-btn {
+      font-size: 0.77rem; padding: 0.32rem 0.72rem;
+      border-radius: 0.4rem;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,0.04);
+      color: var(--text);
+      cursor: pointer; font-family: inherit;
+      transition: all 0.15s;
+    }
+    .act-btn:hover { border-color: var(--purple); color: var(--purple); background: rgba(168,85,247,.1); }
+    .act-btn.abort { color: var(--red); border-color: rgba(248,113,113,.4); }
+    .act-btn.abort:hover { background: rgba(248,113,113,.15); border-color: var(--red); }
+
+    .empty-state {
+      grid-column: 1/-1; text-align: center;
+      color: var(--muted); padding: 3rem 1rem; font-size: 0.95rem;
+    }
+
+    /* ── Toast ───────────────────────────────────────────── */
+    #toast {
+      position: fixed; bottom: 1.75rem; right: 1.75rem;
+      padding: 0.8rem 1.4rem; border-radius: 0.75rem;
+      font-size: 0.88rem; font-weight: 500;
+      z-index: 999; max-width: 340px;
+      transform: translateY(130%);
+      transition: transform 0.35s cubic-bezier(0.34,1.56,0.64,1);
+      backdrop-filter: blur(14px);
+    }
+    #toast.show { transform: translateY(0); }
+    #toast.ok  { background: rgba(74,222,128,.12); border: 1px solid var(--green);  color: var(--green);  box-shadow: 0 4px 24px rgba(74,222,128,.2); }
+    #toast.err { background: rgba(248,113,113,.12); border: 1px solid var(--red);    color: var(--red);    box-shadow: 0 4px 24px rgba(248,113,113,.2); }
+    #toast.inf { background: rgba(34,211,238,.12);  border: 1px solid var(--cyan);   color: var(--cyan);   box-shadow: 0 4px 24px rgba(34,211,238,.2); }
+
+    .spin { display: inline-block; animation: rot 1s linear infinite; }
+    @keyframes rot { to { transform: rotate(360deg); } }
+
+    @media (max-width: 480px) {
+      #menu-grid { grid-template-columns: repeat(2, 1fr); }
+      #orders-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+<div id="stars"></div>
+<div id="app">
+
+  <header>
+    <div class="header-taco">🌮</div>
+    <h1>Space Taco Delivery</h1>
+    <p>Est. Stardate 2350 &nbsp;·&nbsp; Intergalactic Cuisine Across the Universe</p>
+  </header>
+
+  <!-- ── Menu ─────────────────────────────────────────── -->
+  <section>
+    <div class="sh"><h2>🪐 Galactic Menu</h2><div class="sh-line"></div></div>
+    <div id="menu-grid">
+      <div class="card" style="color:var(--muted);text-align:center;grid-column:1/-1">
+        <span class="spin">🚀</span>&nbsp; Loading menu transmission…
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Order form ────────────────────────────────────── -->
+  <section>
+    <div class="sh"><h2>🛸 Launch Your Order</h2><div class="sh-line"></div></div>
+    <div class="card">
+      <div id="form-grid">
+        <div class="fg">
+          <label>Commander ID</label>
+          <input id="f-cid" type="text" placeholder="e.g. EARTHLING-001" autocomplete="off">
+        </div>
+        <div class="fg">
+          <label>Destination Planet</label>
+          <input id="f-planet" type="text" placeholder="e.g. Mars, Vulcan, Tatooine" autocomplete="off">
+        </div>
+        <div class="fg">
+          <label>Galactic Quadrant</label>
+          <input id="f-quad" type="text" placeholder="e.g. Alpha Quadrant, Milky Way" autocomplete="off">
+        </div>
+        <div id="cart-section">
+          <h3>Your Taco Pod</h3>
+          <div id="cart-chips"><span class="empty-msg">Nothing loaded yet — pick items from the menu above ☝️</span></div>
+        </div>
+        <button id="launch-btn" disabled>🚀 Launch Order into Space!</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Tracker ───────────────────────────────────────── -->
+  <section>
+    <div class="tracker-header sh">
+      <h2>📡 Order Tracker</h2>
+      <div class="sh-line"></div>
+      <button id="refresh-btn">↻ Refresh</button>
+    </div>
+    <div id="orders-grid">
+      <div class="empty-state">Scanning the galaxy for orders… 🔭</div>
+    </div>
+  </section>
+
+</div>
+<div id="toast"></div>
+
+<script>
+// ── Constants ───────────────────────────────────────────────────
+const STATUS_FLOW  = ['received','preparing','launched','in_orbit','delivered'];
+const STATUS_LABEL = {
+  received:  '📡 Received',
+  preparing: '👨‍🍳 Preparing',
+  launched:  '🚀 Launched',
+  in_orbit:  '🛸 In Orbit',
+  delivered: '✅ Delivered',
+  aborted:   '💥 Aborted',
+};
+const FILLING_EMOJI = {
+  nebula_beef:       '🥩',
+  stardust_shrimp:   '🦐',
+  moon_mushroom_veg: '🍄',
+  black_hole_bbq:    '🌑',
+  comet_chorizo:     '☄️',
+};
+
+// ── State ────────────────────────────────────────────────────────
+// cart: { [filling]: { quantity, extraHot, name, emoji } }
+const cart = {};
+
+// ── Stars ────────────────────────────────────────────────────────
+(function buildStars() {
+  const el = document.getElementById('stars');
+  for (let i = 0; i < 260; i++) {
+    const s = document.createElement('div');
+    s.className = 'star';
+    const sz = Math.random() * 2.4 + 0.4;
+    s.style.cssText =
+      `left:${Math.random()*100}%;top:${Math.random()*100}%;` +
+      `width:${sz}px;height:${sz}px;` +
+      `--d:${(Math.random()*3+2).toFixed(1)}s;` +
+      `--t:${(Math.random()*6).toFixed(1)}s;` +
+      `opacity:${(Math.random()*0.5+0.1).toFixed(2)};`;
+    el.appendChild(s);
+  }
+})();
+
+// ── Toast ─────────────────────────────────────────────────────────
+let toastTimer;
+function toast(msg, type = 'inf') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = `show ${type}`;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.className = ''; }, 3600);
+}
+
+// ── Spice bar ─────────────────────────────────────────────────────
+function spice(n) {
+  return '🌶️'.repeat(n) + `<span style="opacity:.2">${'🌶️'.repeat(5-n)}</span>`;
+}
+
+// ── Menu ──────────────────────────────────────────────────────────
+async function loadMenu() {
+  try {
+    const r = await fetch('/api/v1/menu');
+    const d = await r.json();
+    renderMenu(d.menu || []);
+  } catch {
+    document.getElementById('menu-grid').innerHTML =
+      `<div class="card" style="color:var(--red);grid-column:1/-1">⚠️ Menu transmission lost</div>`;
+  }
+}
+
+function renderMenu(items) {
+  document.getElementById('menu-grid').innerHTML = items.map(item => {
+    const em = FILLING_EMOJI[item.filling] || '🌮';
+    return `
+      <div class="card menu-card">
+        <div class="menu-emoji">${em}</div>
+        <div class="menu-name">${item.name}</div>
+        <div class="menu-desc">${item.description}</div>
+        <div class="spice">${spice(item.spice_level)}</div>
+        <div class="counter">
+          <button onclick="adj('${item.filling}','${esc(item.name)}','${em}',-1)" aria-label="remove">−</button>
+          <span class="qty" id="q-${item.filling}">0</span>
+          <button onclick="adj('${item.filling}','${esc(item.name)}','${em}',1)" aria-label="add">+</button>
+        </div>
+        <label class="hot-toggle" id="hl-${item.filling}">
+          <input type="checkbox" id="h-${item.filling}"
+            onchange="toggleHot('${item.filling}')" disabled>
+          ☄️ Solar-flare salsa
+        </label>
+      </div>`;
+  }).join('');
+}
+
+function esc(s) { return s.replace(/'/g, "\\'"); }
+
+// ── Cart ──────────────────────────────────────────────────────────
+function adj(filling, name, emoji, delta) {
+  if (!cart[filling]) cart[filling] = { quantity: 0, extraHot: false, name, emoji };
+  cart[filling].quantity = Math.max(0, cart[filling].quantity + delta);
+  if (cart[filling].quantity === 0) {
+    cart[filling].extraHot = false;
+    delete cart[filling];
+  }
+  const qty    = cart[filling]?.quantity ?? 0;
+  const qEl    = document.getElementById(`q-${filling}`);
+  const hEl    = document.getElementById(`h-${filling}`);
+  const hlEl   = document.getElementById(`hl-${filling}`);
+  if (qEl)  qEl.textContent = qty;
+  if (hEl)  { hEl.disabled = qty === 0; if (qty === 0) hEl.checked = false; }
+  if (hlEl) hlEl.classList.toggle('on', qty > 0 && !!cart[filling]?.extraHot);
+  refreshCart();
+}
+
+function toggleHot(filling) {
+  if (!cart[filling]) return;
+  cart[filling].extraHot = document.getElementById(`h-${filling}`).checked;
+  const hlEl = document.getElementById(`hl-${filling}`);
+  if (hlEl) hlEl.classList.toggle('on', cart[filling].extraHot);
+  refreshCart();
+}
+
+function refreshCart() {
+  const chips  = document.getElementById('cart-chips');
+  const btn    = document.getElementById('launch-btn');
+  const entries = Object.entries(cart);
+  if (!entries.length) {
+    chips.innerHTML = `<span class="empty-msg">Nothing loaded yet — pick items from the menu above ☝️</span>`;
+    btn.disabled = true;
+    return;
+  }
+  chips.innerHTML = entries.map(([f, v]) =>
+    `<span class="chip${v.extraHot?' hot':''}">${v.emoji} ${v.name} ×${v.quantity}${v.extraHot?' ☄️':''}</span>`
+  ).join('');
+  btn.disabled = false;
+}
+
+// ── Place order ───────────────────────────────────────────────────
+document.getElementById('launch-btn').addEventListener('click', async () => {
+  const cid    = document.getElementById('f-cid').value.trim();
+  const planet = document.getElementById('f-planet').value.trim();
+  const quad   = document.getElementById('f-quad').value.trim();
+  const items  = Object.entries(cart).map(([filling, v]) => ({
+    filling, quantity: v.quantity, extra_hot: v.extraHot,
+  }));
+
+  if (!cid || !planet) {
+    toast('⚠️ Commander ID and destination planet are required!', 'err'); return;
+  }
+  if (!items.length) { toast('⚠️ Your taco pod is empty!', 'err'); return; }
+
+  const btn = document.getElementById('launch-btn');
+  btn.disabled = true;
+  btn.textContent = '🚀 Launching…';
+
+  try {
+    const r = await fetch('/api/v1/orders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ customer_id: cid, planet, galactic_quadrant: quad, items }),
+    });
+    if (!r.ok) throw new Error((await r.json()).error || 'transmission error');
+    const o = await r.json();
+    toast(`✅ Order ${o.id} launched to ${o.planet}!`, 'ok');
+
+    // reset cart
+    Object.keys(cart).forEach(f => {
+      const q = document.getElementById(`q-${f}`);
+      const h = document.getElementById(`h-${f}`);
+      const hl = document.getElementById(`hl-${f}`);
+      if (q) q.textContent = '0';
+      if (h) { h.checked = false; h.disabled = true; }
+      if (hl) hl.classList.remove('on');
+      delete cart[f];
+    });
+    document.getElementById('f-cid').value = '';
+    document.getElementById('f-planet').value = '';
+    document.getElementById('f-quad').value = '';
+    refreshCart();
+    loadOrders();
+  } catch (e) {
+    toast(`💥 Launch failed: ${e.message}`, 'err');
+    btn.disabled = false;
+    refreshCart();
+  } finally {
+    btn.textContent = '🚀 Launch Order into Space!';
+  }
+});
+
+// ── Orders ────────────────────────────────────────────────────────
+async function loadOrders() {
+  const rbtn = document.getElementById('refresh-btn');
+  rbtn.textContent = '↻ Refreshing…';
+  try {
+    const r = await fetch('/api/v1/orders');
+    const d = await r.json();
+    renderOrders(d.orders || []);
+  } catch {
+    document.getElementById('orders-grid').innerHTML =
+      `<div class="empty-state">⚠️ Signal lost — can't reach the relay station</div>`;
+  } finally {
+    rbtn.textContent = '↻ Refresh';
+  }
+}
+
+function renderOrders(orders) {
+  const grid = document.getElementById('orders-grid');
+  if (!orders.length) {
+    grid.innerHTML = `<div class="empty-state">No orders in orbit yet — launch your first taco pod! 🌮</div>`;
+    return;
+  }
+  orders.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  grid.innerHTML = orders.map(o => {
+    const idx      = STATUS_FLOW.indexOf(o.status);
+    const aborted  = o.status === 'aborted';
+    const steps    = STATUS_FLOW.map((s, i) => {
+      let cls = 'ps';
+      if (aborted) cls += i <= idx ? ' aborted' : '';
+      else if (i < idx) cls += ' done';
+      else if (i === idx) cls += ' current';
+      return `<div class="${cls}" title="${STATUS_LABEL[s]||s}"></div>`;
+    }).join('');
+
+    const itemChips = (o.items||[]).map(it => {
+      const em = FILLING_EMOJI[it.filling] || '🌮';
+      return `<span class="chip${it.extra_hot?' hot':''}">${em} ×${it.quantity}${it.extra_hot?' ☄️':''}</span>`;
+    }).join('');
+
+    const nexts = nextStatuses(o.status);
+    const actBtns = nexts.map(s =>
+      `<button class="act-btn${s==='aborted'?' abort':''}"
+        onclick="setStatus('${o.id}','${s}')">${STATUS_LABEL[s]||s}</button>`
+    ).join('');
+
+    return `
+      <div class="card order-card">
+        <div class="order-top">
+          <span class="order-id">${o.id}</span>
+          <span class="badge b-${o.status}">${STATUS_LABEL[o.status]||o.status}</span>
+        </div>
+        <div class="order-meta">
+          <span class="meta">👤 ${o.customer_id}</span>
+          <span class="meta">🪐 ${o.planet}</span>
+          ${o.galactic_quadrant ? `<span class="meta">🌌 ${o.galactic_quadrant}</span>` : ''}
+          <span class="meta">🌮 ${o.total_tacos} taco${o.total_tacos!==1?'s':''}</span>
+        </div>
+        ${itemChips ? `<div class="order-items">${itemChips}</div>` : ''}
+        <div class="progress-bar">${steps}</div>
+        ${actBtns ? `<div class="actions">${actBtns}</div>` : ''}
+      </div>`;
+  }).join('');
+}
+
+function nextStatuses(current) {
+  if (current === 'delivered' || current === 'aborted') return [];
+  const i = STATUS_FLOW.indexOf(current);
+  const out = [];
+  if (i >= 0 && i < STATUS_FLOW.length - 1) out.push(STATUS_FLOW[i + 1]);
+  out.push('aborted');
+  return out;
+}
+
+async function setStatus(id, status) {
+  try {
+    const r = await fetch(`/api/v1/orders/${id}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    });
+    if (!r.ok) throw new Error((await r.json()).error || 'error');
+    toast(`${STATUS_LABEL[status]} — ${id} updated`, 'ok');
+    loadOrders();
+  } catch (e) {
+    toast(`💥 Update failed: ${e.message}`, 'err');
+  }
+}
+
+document.getElementById('refresh-btn').addEventListener('click', loadOrders);
+
+// ── Boot ──────────────────────────────────────────────────────────
+loadMenu();
+loadOrders();
+setInterval(loadOrders, 30_000);
+</script>
+</body>
+</html>

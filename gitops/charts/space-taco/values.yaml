@@ -102,6 +102,9 @@ affinity:
 
 env:
   PORT: "8080"
+  # Set to a Redis URL (e.g. redis://redis:6379/0) to enable order caching.
+  # Leave empty to use the in-memory store only.
+  REDIS_URL: ""
 
 # Kyverno image verification — populated by cluster policy
 imageVerification:

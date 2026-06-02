@@ -43,6 +43,10 @@ spec:
           env:
             - name: PORT
               value: {{ .Values.env.PORT | quote }}
+            {{- if .Values.env.REDIS_URL }}
+            - name: REDIS_URL
+              value: {{ .Values.env.REDIS_URL | quote }}
+            {{- end }}
           livenessProbe:
             {{- toYaml .Values.livenessProbe | nindent 12 }}
           readinessProbe:

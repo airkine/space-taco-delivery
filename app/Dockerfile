@@ -2,7 +2,9 @@
 # =============================================================================
 # Stage 1: Build — compile the Go binary
 # =============================================================================
-FROM golang:1.22-alpine AS builder
+FROM golang:1.24-alpine AS builder
+
+RUN apk update && apk upgrade --no-cache
 
 WORKDIR /build
 
@@ -22,8 +24,8 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
 # =============================================================================
 # Stage 2: Security scan layer — run govulncheck
 # =============================================================================
-FROM golang:1.22-alpine AS scanner
-RUN go install golang.org/x/vuln/cmd/govulncheck@latest
+FROM golang:1.24-alpine AS scanner
+RUN apk update && apk upgrade --no-cache && go install golang.org/x/vuln/cmd/govulncheck@latest
 WORKDIR /scan
 COPY --from=builder /build .
 RUN govulncheck ./... || true  # non-blocking in build; CI will gate separately

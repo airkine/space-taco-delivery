@@ -110,6 +110,36 @@ resource "github_actions_secret" "cosign_password" {
   plaintext_value = var.cosign_password
 }
 
+resource "github_actions_secret" "sonar_token" {
+  repository      = github_repository.space_taco.name
+  secret_name     = "SONAR_TOKEN"
+  plaintext_value = var.sonar_token
+}
+
+resource "github_actions_secret" "sonar_host_url" {
+  repository      = github_repository.space_taco.name
+  secret_name     = "SONAR_HOST_URL"
+  plaintext_value = var.sonar_host_url
+}
+
+resource "github_actions_secret" "azure_client_id" {
+  repository      = github_repository.space_taco.name
+  secret_name     = "AZURE_CLIENT_ID"
+  plaintext_value = var.azure_client_id
+}
+
+resource "github_actions_secret" "azure_tenant_id" {
+  repository      = github_repository.space_taco.name
+  secret_name     = "AZURE_TENANT_ID"
+  plaintext_value = var.azure_tenant_id
+}
+
+resource "github_actions_secret" "azure_subscription_id" {
+  repository      = github_repository.space_taco.name
+  secret_name     = "AZURE_SUBSCRIPTION_ID"
+  plaintext_value = var.azure_subscription_id
+}
+
 # ---------------------------------------------------------------------------
 # Environments
 # ---------------------------------------------------------------------------

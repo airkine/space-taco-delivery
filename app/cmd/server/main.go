@@ -18,10 +18,24 @@ func main() {
 		Level: slog.LevelInfo,
 	}))
 
-	st := store.NewMemoryStore()
+	memStore := store.NewMemoryStore()
+
+	var st store.Store = memStore
+	if redisURL := os.Getenv("REDIS_URL"); redisURL != "" {
+		cache, err := store.NewRedisCache(memStore, redisURL)
+		if err != nil {
+			log.Warn("redis cache unavailable, falling back to memory store", "error", err)
+		} else {
+			log.Info("redis cache enabled", "url", redisURL)
+			defer cache.Close()
+			st = cache
+		}
+	}
+
 	h := handler.New(st, log)
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /", h.ServeUI)
 	mux.HandleFunc("GET /healthz", h.Healthz)
 	mux.HandleFunc("GET /readyz", h.Readyz)
 	mux.HandleFunc("GET /api/v1/orders", h.ListOrders)
