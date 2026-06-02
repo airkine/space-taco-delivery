@@ -34,7 +34,7 @@ resource "github_repository" "space_taco" {
   has_issues        = true
   has_projects      = false
   has_wiki          = false
-  auto_init         = false
+  auto_init         = true
   allow_merge_commit = false
   allow_rebase_merge = false
   allow_squash_merge = true
@@ -42,6 +42,21 @@ resource "github_repository" "space_taco" {
 
   squash_merge_commit_title   = "PR_TITLE"
   squash_merge_commit_message = "COMMIT_MESSAGES"
+}
+
+# ---------------------------------------------------------------------------
+# Main branch + default
+# ---------------------------------------------------------------------------
+resource "github_branch" "main" {
+  repository = github_repository.space_taco.name
+  branch     = "main"
+
+  depends_on = [github_repository.space_taco]
+}
+
+resource "github_branch_default" "main" {
+  repository = github_repository.space_taco.name
+  branch     = github_branch.main.branch
 }
 
 # ---------------------------------------------------------------------------
@@ -100,6 +115,18 @@ resource "github_actions_secret" "cosign_password" {
   repository      = github_repository.space_taco.name
   secret_name     = "COSIGN_PASSWORD"
   plaintext_value = var.cosign_password
+}
+
+resource "github_actions_secret" "sonar_token" {
+  repository      = github_repository.space_taco.name
+  secret_name     = "SONAR_TOKEN"
+  plaintext_value = var.sonar_token
+}
+
+resource "github_actions_secret" "sonar_host_url" {
+  repository      = github_repository.space_taco.name
+  secret_name     = "SONAR_HOST_URL"
+  plaintext_value = var.sonar_host_url
 }
 
 # ---------------------------------------------------------------------------

@@ -15,3 +15,16 @@ variable "cosign_password" {
   sensitive   = true
   default     = ""
 }
+
+variable "sonar_token" {
+  description = "SonarQube user token for the space-taco-delivery project"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "sonar_host_url" {
+  description = "Base URL of the self-hosted SonarQube instance (e.g. https://sonar.example.com)"
+  type        = string
+  default     = ""
+}

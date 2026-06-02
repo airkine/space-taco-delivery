@@ -10,6 +10,8 @@ on:
     branches: [main]
     paths:
       - "app/**"
+      - "gitops/**"
+      - ".github/workflows/build.yml"
   workflow_dispatch:
     inputs:
       push_image:
@@ -62,6 +64,62 @@ jobs:
         with:
           name: coverage
           path: app/coverage.out
+
+  # ---------------------------------------------------------------------------
+  # PR Validation — Checkov (IaC security) + SonarQube (code quality)
+  # ---------------------------------------------------------------------------
+  validate:
+    name: Validate
+    if: github.event_name == 'pull_request'
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # SonarQube needs full history for blame/new-code detection
+
+      - name: Download coverage report
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage
+          path: app
+
+      - name: Run Checkov
+        id: checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: .
+          framework: terraform,dockerfile,kubernetes
+          output_format: cli,sarif
+          output_file_path: console,checkov-results.sarif
+
+      - name: Upload Checkov SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: checkov-results.sarif
+          category: checkov
+
+      - name: SonarQube Scan
+        uses: sonarsource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        with:
+          args: >
+            -Dsonar.projectKey=space-taco-delivery
+            -Dsonar.sources=app
+            -Dsonar.tests=app
+            -Dsonar.test.inclusions=**/*_test.go
+            -Dsonar.go.coverage.reportPaths=app/coverage.out
+
+      - name: SonarQube Quality Gate
+        uses: sonarsource/sonarqube-quality-gate-action@v1
+        timeout-minutes: 5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
   # ---------------------------------------------------------------------------
   # Build, SBOM, Sign, Push
