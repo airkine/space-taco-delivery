@@ -31,13 +31,13 @@ resource "github_repository" "space_taco" {
   description = "🌮🚀 Intergalactic taco delivery microservice — GitOps practice repo"
   visibility  = "public"
 
-  has_issues        = true
-  has_projects      = false
-  has_wiki          = false
-  auto_init         = false
-  allow_merge_commit = false
-  allow_rebase_merge = false
-  allow_squash_merge = true
+  has_issues             = true
+  has_projects           = false
+  has_wiki               = false
+  auto_init              = false
+  allow_merge_commit     = false
+  allow_rebase_merge     = false
+  allow_squash_merge     = true
   delete_branch_on_merge = true
 
   squash_merge_commit_title   = "PR_TITLE"
