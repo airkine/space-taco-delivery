@@ -45,6 +45,14 @@ resource "github_repository" "space_taco" {
 }
 
 # ---------------------------------------------------------------------------
+# Default branch
+# ---------------------------------------------------------------------------
+resource "github_branch_default" "main" {
+  repository = github_repository.space_taco.name
+  branch     = "main"
+}
+
+# ---------------------------------------------------------------------------
 # Branch protection for main
 # ---------------------------------------------------------------------------
 resource "github_branch_protection" "main" {
