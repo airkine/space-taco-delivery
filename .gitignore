@@ -1,0 +1,29 @@
+# Go
+app/bin/
+app/coverage.out
+app/*.test
+
+# Terraform
+gitops/terraform/.terraform/
+gitops/terraform/*.tfstate
+gitops/terraform/*.tfstate.backup
+gitops/terraform/*.tfplan
+gitops/terraform/tfplan
+gitops/terraform/plan_output.txt
+gitops/terraform/.terraform.lock.hcl
+gitops/terraform/terraform.tfvars
+
+# SBOM artifacts
+*.spdx.json
+sbom.json
+trivy-results.sarif
+
+# Local kind kubeconfig
+deploy/kind/.kubeconfig
+
+# Claude Code local user settings
+.claude/settings.local.json
+
+# OS
+.DS_Store
+Thumbs.db

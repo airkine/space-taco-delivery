@@ -1,0 +1,212 @@
+name: Build, Sign & Push Image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - ".github/workflows/build.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "app/**"
+  workflow_dispatch:
+    inputs:
+      push_image:
+        description: "Push image to registry"
+        required: false
+        default: "false"
+        type: boolean
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}/space-taco-delivery
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write         # Required for OIDC signing (Cosign keyless)
+  security-events: write  # For SARIF uploads
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Lint & Test
+  # ---------------------------------------------------------------------------
+  test:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: app/go.mod
+          cache-dependency-path: app/go.sum
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          working-directory: app
+          version: latest
+
+      - name: Run tests
+        run: go test -race -coverprofile=coverage.out ./...
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: app/coverage.out
+
+  # ---------------------------------------------------------------------------
+  # Build, SBOM, Sign, Push
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build & Publish
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      image-digest: ${{ steps.build.outputs.digest }}
+      image-ref: ${{ steps.meta.outputs.tags }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU (multi-arch)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable={{is_default_branch}}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: app
+          file: app/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            COMMIT=${{ github.sha }}
+          provenance: true  # Generates SLSA provenance attestation
+          sbom: true        # Generates OCI-attached SBOM
+
+      # Install Cosign for keyless signing
+      - name: Install Cosign
+        if: github.event_name != 'pull_request'
+        uses: sigstore/cosign-installer@v3
+
+      # Sign the image with keyless OIDC signing (Sigstore)
+      - name: Sign container image (keyless)
+        if: github.event_name != 'pull_request'
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          cosign sign --yes \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+
+      # Generate a standalone SBOM with Syft and attach to image
+      - name: Generate SBOM with Syft
+        if: github.event_name != 'pull_request'
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+          upload-artifact: true
+          upload-artifact-retention: 30
+
+      # Attach SBOM to image with Cosign
+      - name: Attach SBOM to image
+        if: github.event_name != 'pull_request'
+        run: |
+          cosign attach sbom \
+            --sbom sbom.spdx.json \
+            --type spdx \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+
+      # Scan with Trivy and upload SARIF
+      - name: Run Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+        env:
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Trivy SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+
+  # ---------------------------------------------------------------------------
+  # Update GitOps manifest digest
+  # ---------------------------------------------------------------------------
+  update-gitops:
+    name: Update GitOps Digest
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update Helm values with new image digest
+        run: |
+          DIGEST="${{ needs.build.outputs.image-digest }}"
+          IMAGE_TAG="sha-$(echo ${{ github.sha }} | cut -c1-7)"
+
+          # Update the image tag in the Helm values
+          sed -i "s|tag:.*|tag: \"${IMAGE_TAG}\"|g" \
+            gitops/charts/space-taco/values.yaml
+
+          echo "Updated image tag to: ${IMAGE_TAG}"
+
+      - name: Commit and push digest update
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore(gitops): update space-taco image to sha-${{ github.sha }}"
+          file_pattern: "gitops/charts/space-taco/values.yaml"
+          commit_author: "github-actions[bot] <github-actions[bot]@users.noreply.github.com>"

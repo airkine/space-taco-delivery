@@ -1,0 +1,18 @@
+version: "2"
+
+linters:
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gosec
+    - gofmt
+    - revive
+    - bodyclose
+    - noctx
+
+issues:
+  max-same-issues: 0

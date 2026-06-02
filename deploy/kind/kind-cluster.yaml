@@ -1,0 +1,39 @@
+---
+# Kind cluster configuration for Space Taco local development
+# Usage: kind create cluster --name space-taco --config deploy/kind/kind-cluster.yaml
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+
+name: space-taco
+
+nodes:
+  - role: control-plane
+    # Port mappings for local ingress access
+    extraPortMappings:
+      - containerPort: 30080
+        hostPort: 8080
+        protocol: TCP
+      - containerPort: 30443
+        hostPort: 8443
+        protocol: TCP
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+  - role: worker
+    labels:
+      workload: app
+  - role: worker
+    labels:
+      workload: app
+
+# Feature gates for Kyverno compatibility
+featureGates:
+  ValidatingAdmissionPolicy: true
+
+# Networking
+networking:
+  podSubnet: "10.244.0.0/16"
+  serviceSubnet: "10.96.0.0/16"

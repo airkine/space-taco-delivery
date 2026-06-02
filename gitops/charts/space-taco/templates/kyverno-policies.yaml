@@ -1,0 +1,109 @@
+---
+# Kyverno ClusterPolicy: Enforce signed images from GHCR
+# All pods must use images signed with Sigstore/Cosign keyless signing.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: verify-space-taco-image-signature
+  annotations:
+    policies.kyverno.io/title: Verify Space Taco Image Signature
+    policies.kyverno.io/category: Software Supply Chain Security
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      Ensures all space-taco-delivery container images are signed via
+      Sigstore keyless signing (OIDC + Rekor transparency log).
+      Unsigned images will be rejected at admission.
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: verify-image-signature
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - space-taco
+              selector:
+                matchLabels:
+                  app.kubernetes.io/name: space-taco
+      verifyImages:
+        - imageReferences:
+            - "ghcr.io/your-org/space-taco-delivery/space-taco-delivery:*"
+          attestors:
+            - count: 1
+              entries:
+                - keyless:
+                    # GitHub Actions OIDC issuer
+                    issuer: "https://token.actions.githubusercontent.com"
+                    subject: "https://github.com/your-org/space-taco-delivery/.github/workflows/build.yml@refs/heads/main"
+                    rekor:
+                      url: https://rekor.sigstore.dev
+          attestations:
+            - type: https://spdx.dev/Document
+              attestors:
+                - count: 1
+                  entries:
+                    - keyless:
+                        issuer: "https://token.actions.githubusercontent.com"
+                        subject: "https://github.com/your-org/space-taco-delivery/.github/workflows/build.yml@refs/heads/main"
+
+---
+# Kyverno ClusterPolicy: Enforce pod security standards
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: space-taco-pod-security
+  annotations:
+    policies.kyverno.io/title: Space Taco Pod Security Standards
+    policies.kyverno.io/category: Pod Security
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/description: >-
+      Enforces restricted pod security: no privilege escalation,
+      read-only root filesystem, non-root user, dropped capabilities.
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: restrict-privilege-escalation
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [space-taco]
+      validate:
+        message: "Privilege escalation is forbidden in the galaxy."
+        pattern:
+          spec:
+            containers:
+              - securityContext:
+                  allowPrivilegeEscalation: "false"
+
+    - name: require-read-only-root-fs
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [space-taco]
+      validate:
+        message: "Root filesystem must be read-only. Protect the taco recipes!"
+        pattern:
+          spec:
+            containers:
+              - securityContext:
+                  readOnlyRootFilesystem: "true"
+
+    - name: require-non-root
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [space-taco]
+      validate:
+        message: "Containers must run as non-root."
+        pattern:
+          spec:
+            securityContext:
+              runAsNonRoot: "true"
