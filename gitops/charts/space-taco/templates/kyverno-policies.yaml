@@ -1,6 +1,8 @@
+{{- if .Values.imageVerification.enabled }}
 ---
 # Kyverno ClusterPolicy: Enforce signed images from GHCR
 # All pods must use images signed with Sigstore/Cosign keyless signing.
+# Skipped when imageVerification.enabled=false (e.g. local development).
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
@@ -40,7 +42,7 @@ spec:
                     issuer: "https://token.actions.githubusercontent.com"
                     subject: "https://github.com/your-org/space-taco-delivery/.github/workflows/build.yml@refs/heads/main"
                     rekor:
-                      url: https://rekor.sigstore.dev
+                      url: {{ .Values.imageVerification.rekorURL }}
           attestations:
             - type: https://spdx.dev/Document
               attestors:
@@ -49,6 +51,9 @@ spec:
                     - keyless:
                         issuer: "https://token.actions.githubusercontent.com"
                         subject: "https://github.com/your-org/space-taco-delivery/.github/workflows/build.yml@refs/heads/main"
+                        rekor:
+                          url: {{ .Values.imageVerification.rekorURL }}
+{{- end }}
 
 ---
 # Kyverno ClusterPolicy: Enforce pod security standards

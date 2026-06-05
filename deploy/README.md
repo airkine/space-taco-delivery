@@ -1,0 +1,179 @@
+# Deploy — Local Development Environment
+
+This directory contains everything needed to spin up a full Space Taco Delivery
+environment on your local machine using [Kind](https://kind.sigs.k8s.io/)
+(Kubernetes in Docker).
+
+---
+
+## Directory Structure
+
+```
+deploy/
+└── kind/
+    ├── kind-cluster.yaml       # Kind cluster topology (1 control-plane + 2 workers)
+    ├── bootstrap-local.sh      # One-shot bootstrap script for Git Bash / WSL / macOS
+    └── bootstrap-local.ps1     # One-shot bootstrap script for Windows PowerShell
+```
+
+---
+
+## Prerequisites
+
+Install all of the following tools before running the bootstrap script.
+
+| Tool | Minimum Version | Purpose |
+|------|----------------|---------|
+| [Docker](https://docs.docker.com/get-docker/) | 24.x | Container runtime — Kind wraps Docker |
+| [kind](https://kind.sigs.k8s.io/docs/user/quick-start/#installation) | 0.22+ | Creates Kubernetes clusters inside Docker containers |
+| [kubectl](https://kubernetes.io/docs/tasks/tools/) | 1.29+ | Kubernetes CLI for interacting with the cluster |
+| [helm](https://helm.sh/docs/intro/install/) | 3.14+ | Deploys the Space Taco Helm chart |
+| [flux](https://fluxcd.io/flux/installation/) | 2.x | Installs Flux CRDs (no live git sync needed locally) |
+
+Verify all tools are on your `PATH` before continuing:
+
+```bash
+kind version && kubectl version --client && helm version && flux version && docker version
+```
+
+---
+
+## Quick Start — Bootstrap Script
+
+The bootstrap script performs every step end-to-end:
+
+1. Creates the Kind cluster (if it does not already exist)
+2. Builds the Space Taco container image locally with Docker
+3. Loads the image directly into Kind (no registry push needed)
+4. Creates the `space-taco` namespace with Pod Security Standards enforced
+5. Installs [Kyverno](https://kyverno.io/) for policy enforcement
+6. Installs Flux CRDs (source-controller + helm-controller only)
+7. Deploys the Space Taco Helm chart with the locally built image
+
+### Run from the repository root
+
+> **Important:** Always run the script from the repository root, not from
+> inside the `deploy/kind/` directory. The script references paths such as
+> `deploy/kind/kind-cluster.yaml` and `gitops/charts/space-taco` relative to
+> the repo root.
+
+**Windows — PowerShell (recommended on Windows):**
+
+```powershell
+# Run the bootstrap
+.\deploy\kind\bootstrap-local.ps1
+```
+
+**Git Bash / WSL / macOS — bash:**
+
+```bash
+# Make executable (first time only)
+chmod +x deploy/kind/bootstrap-local.sh
+
+# Run the bootstrap
+./deploy/kind/bootstrap-local.sh
+```
+
+Both scripts are identical in behaviour. The PowerShell version uses
+`$ErrorActionPreference = 'Stop'` (equivalent to `set -e`) and native
+`Write-Host` colour output so no Git Bash dependency is required on Windows.
+
+---
+
+## Manual Steps — Create the Kind Cluster Only
+
+If you only want to create the cluster without deploying the application, run
+`kind create cluster` directly with the provided config file:
+
+```bash
+# Create the 'space-taco' cluster using the config in this repo
+kind create cluster \
+  --name space-taco \
+  --config deploy/kind/kind-cluster.yaml \
+  --wait 120s
+
+# Point kubectl at the new cluster
+kubectl config use-context kind-space-taco
+
+# Verify the nodes are Ready
+kubectl get nodes
+```
+
+Expected output — three nodes (one control-plane, two workers):
+
+```
+NAME                        STATUS   ROLES           AGE   VERSION
+space-taco-control-plane    Ready    control-plane   Xs    v1.x.x
+space-taco-worker           Ready    <none>          Xs    v1.x.x
+space-taco-worker2          Ready    <none>          Xs    v1.x.x
+```
+
+---
+
+## Cluster Topology
+
+The Kind cluster is defined in [kind/kind-cluster.yaml](kind/kind-cluster.yaml).
+
+| Node | Role | Notes |
+|------|------|-------|
+| `space-taco-control-plane` | control-plane | Hosts ingress; ports 8080 → 30080 and 8443 → 30443 are mapped to `localhost` |
+| `space-taco-worker` | worker | Labelled `workload=app` |
+| `space-taco-worker2` | worker | Labelled `workload=app` |
+
+**Feature gates enabled:**
+- `ValidatingAdmissionPolicy: true` — required for Kyverno compatibility
+
+**Network CIDRs:**
+- Pod subnet: `10.244.0.0/16`
+- Service subnet: `10.96.0.0/16`
+
+---
+
+## Testing the Running Application
+
+After a successful bootstrap, use these commands to exercise the app:
+
+```bash
+# Port-forward the service to localhost:8080
+kubectl port-forward svc/space-taco -n space-taco 8080:80 &
+
+# Health check
+curl http://localhost:8080/healthz
+
+# Browse the galactic menu
+curl http://localhost:8080/api/v1/menu | jq .
+
+# Place an order
+curl -X POST http://localhost:8080/api/v1/orders \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "customer_id": "EARTHLING-001",
+    "planet": "Earth",
+    "galactic_quadrant": "Milky Way",
+    "items": [{"filling": "black_hole_bbq", "quantity": 2, "extra_hot": true}]
+  }'
+
+# List all orders
+curl http://localhost:8080/api/v1/orders | jq .
+```
+
+---
+
+## Teardown
+
+```bash
+# Delete the Kind cluster and all resources inside it
+kind delete cluster --name space-taco
+```
+
+---
+
+## Troubleshooting
+
+| Symptom | Likely Cause | Fix |
+|---------|-------------|-----|
+| `Required tool not found: <cmd>` | Missing prerequisite | Install the tool listed in the Prerequisites table |
+| `Cluster already exists` warning | Previous run left the cluster up | Expected behaviour — the script skips creation and continues |
+| Helm deploy times out | Image not loaded into Kind | Re-run the script from the repo root; ensure Docker is running |
+| `kubectl` targets the wrong cluster | Wrong context active | Run `kubectl config use-context kind-space-taco` |
+| Kyverno install fails | Docker resources too low | Increase Docker Desktop memory to at least 4 GB |

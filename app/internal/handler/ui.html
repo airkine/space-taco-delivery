@@ -204,7 +204,9 @@
       letter-spacing: 0.1em; text-transform: uppercase;
       color: var(--muted);
     }
-    .fg input {
+    /* shared styles for both text inputs and dropdowns in the order form */
+    .fg input,
+    .fg select {
       background: rgba(255,255,255,0.04);
       border: 1px solid var(--border);
       border-radius: 0.6rem;
@@ -214,12 +216,29 @@
       font-size: 0.93rem;
       outline: none;
       transition: border-color 0.2s, box-shadow 0.2s;
+      width: 100%;
     }
-    .fg input:focus {
+    .fg input:focus,
+    .fg select:focus {
       border-color: var(--purple);
       box-shadow: 0 0 0 3px var(--purple-glow);
     }
     .fg input::placeholder { color: var(--muted); }
+
+    /* style the dropdown arrow and placeholder option to match the dark theme */
+    .fg select {
+      appearance: none;
+      -webkit-appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23a78bfa' stroke-width='2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 0.9rem center;
+      padding-right: 2.4rem;
+      cursor: pointer;
+    }
+    .fg select option {
+      background: #1a1030; /* dark background so options are readable */
+      color: var(--text);
+    }
 
     #cart-section { grid-column: 1 / -1; }
     #cart-section h3 {
@@ -377,17 +396,56 @@
     <div class="sh"><h2>🛸 Launch Your Order</h2><div class="sh-line"></div></div>
     <div class="card">
       <div id="form-grid">
+        <!-- Commander ID: pick your space persona -->
         <div class="fg">
           <label>Commander ID</label>
-          <input id="f-cid" type="text" placeholder="e.g. EARTHLING-001" autocomplete="off">
+          <select id="f-cid">
+            <option value="">— Select your space alias —</option>
+            <option value="DARTH-TACO-LORD">DARTH-TACO-LORD</option>
+            <option value="CAPTAIN-BURRITO">CAPTAIN-BURRITO</option>
+            <option value="ADMIRAL-NACHO">ADMIRAL-NACHO</option>
+            <option value="GENERAL-GUACAMOLE">GENERAL-GUACAMOLE</option>
+            <option value="LT-JALAPENIO">LT-JALAPEÑO</option>
+            <option value="STARLORD-HOT-SAUCE">STARLORD-HOT-SAUCE</option>
+            <option value="COMMANDER-QUESO">COMMANDER-QUESO</option>
+            <option value="SPACE-COWBOY-007">SPACE-COWBOY-007</option>
+            <option value="ENSIGN-SRIRACHA">ENSIGN-SRIRACHA</option>
+            <option value="DR-CRUNCHWRAP">DR-CRUNCHWRAP</option>
+          </select>
         </div>
+
+        <!-- Destination Planet: where should we beam these tacos? -->
         <div class="fg">
           <label>Destination Planet</label>
-          <input id="f-planet" type="text" placeholder="e.g. Mars, Vulcan, Tatooine" autocomplete="off">
+          <select id="f-planet">
+            <option value="">— Pick a delivery world —</option>
+            <option value="Mars (Rusty Burrito Basin)">Mars (Rusty Burrito Basin)</option>
+            <option value="Tatooine (Too Hot for Salsa)">Tatooine (Too Hot for Salsa)</option>
+            <option value="Vulcan (Logically Delicious)">Vulcan (Logically Delicious)</option>
+            <option value="Hoth (Frozen Bean Planet)">Hoth (Frozen Bean Planet)</option>
+            <option value="Pandora (Blue Corn Chip World)">Pandora (Blue Corn Chip World)</option>
+            <option value="Arrakis (Spice World, No Girls)">Arrakis (Spice World, No Girls)</option>
+            <option value="Klingon Prime (Bat'leth BBQ)">Klingon Prime (Bat'leth BBQ)</option>
+            <option value="Naboo (The Guac is Ripe Here)">Naboo (The Guac is Ripe Here)</option>
+            <option value="Pluto (Demoted but Hungry)">Pluto (Demoted but Hungry)</option>
+            <option value="Uranus (We All Giggled)">Uranus (We All Giggled)</option>
+          </select>
         </div>
+
+        <!-- Galactic Quadrant: navigational cheese zone selection -->
         <div class="fg">
           <label>Galactic Quadrant</label>
-          <input id="f-quad" type="text" placeholder="e.g. Alpha Quadrant, Milky Way" autocomplete="off">
+          <select id="f-quad">
+            <option value="">— Choose your cheese zone —</option>
+            <option value="Alpha Quadrant (The Crunchy Side)">Alpha Quadrant (The Crunchy Side)</option>
+            <option value="Beta Quadrant (Soft Shell Territory)">Beta Quadrant (Soft Shell Territory)</option>
+            <option value="Gamma Quadrant (Where Salsa Flows)">Gamma Quadrant (Where Salsa Flows)</option>
+            <option value="Delta Quadrant (Beyond the Cheese Wall)">Delta Quadrant (Beyond the Cheese Wall)</option>
+            <option value="Omega Sector (No Delivery Surcharge)">Omega Sector (No Delivery Surcharge)</option>
+            <option value="The Spice Lanes (Handle With Care)">The Spice Lanes (Handle With Care)</option>
+            <option value="Nacho Nebula (Dense &amp; Cheesy)">Nacho Nebula (Dense &amp; Cheesy)</option>
+            <option value="Burrito Belt (High Traffic Zone)">Burrito Belt (High Traffic Zone)</option>
+          </select>
         </div>
         <div id="cart-section">
           <h3>Your Taco Pod</h3>

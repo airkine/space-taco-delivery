@@ -171,24 +171,41 @@ Required secrets to add after repo creation:
 
 ## Supply Chain Security
 
-Every image built in CI is:
+Every artifact built in CI is:
 
 1. **Built** in a multi-stage Dockerfile → distroless `nonroot` final image
-2. **Scanned** with Trivy (CRITICAL/HIGH gate)
-3. **Signed** with Cosign keyless signing (GitHub OIDC → Sigstore Rekor)
-4. **SBOM generated** in SPDX-JSON format and attached to the image
-5. **Verified** at admission by Kyverno before any pod starts
+2. **Scanned** with Trivy pinned to `v0.35.0` (CRITICAL/HIGH gate; `@master` removed after the March 2026 Trivy supply-chain incident)
+3. **Signed** with Cosign keyless signing (GitHub OIDC → Fulcio CA → Sigstore Rekor transparency log; no long-lived keys)
+4. **SBOM generated** in SPDX-JSON via both BuildKit (`sbom: true`) and Syft, then **attested** with `cosign attest` (modern replacement for the deprecated `cosign attach sbom`)
+5. **Helm chart signed and SBOM-attested** — chart is signed by immutable digest (not mutable tag), and a Syft-generated SBOM is attested against the chart digest
+6. **Verified** at admission by Kyverno before any pod starts
 
 ```bash
-# Verify an image signature locally
+# Verify a container image signature
 cosign verify \
   --certificate-identity-regexp "https://github.com/your-org/space-taco-delivery" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
   ghcr.io/your-org/space-taco-delivery/space-taco-delivery:latest
 
-# Inspect attached SBOM
-cosign download sbom \
-  ghcr.io/your-org/space-taco-delivery/space-taco-delivery:latest
+# Verify the SBOM attestation on the image (cosign attest — not cosign attach sbom)
+cosign verify-attestation \
+  --type spdxjson \
+  --certificate-identity-regexp "https://github.com/your-org/space-taco-delivery" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  ghcr.io/your-org/space-taco-delivery/space-taco-delivery:latest | jq '.payload | @base64d | fromjson'
+
+# Verify the Helm chart signature (by digest)
+cosign verify \
+  --certificate-identity-regexp "https://github.com/your-org/space-taco-delivery" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  ghcr.io/your-org/space-taco-delivery/charts/space-taco@sha256:<digest>
+
+# Verify the Helm chart SBOM attestation
+cosign verify-attestation \
+  --type spdxjson \
+  --certificate-identity-regexp "https://github.com/your-org/space-taco-delivery" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  ghcr.io/your-org/space-taco-delivery/charts/space-taco@sha256:<digest> | jq '.payload | @base64d | fromjson'
 ```
 
 ## API Reference

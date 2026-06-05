@@ -15,7 +15,7 @@ on:
       push_image:
         description: "Push image to registry"
         required: false
-        default: "false"
+        default: false
         type: boolean
 
 env:
@@ -128,11 +128,10 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: sigstore/cosign-installer@v3
 
-      # Sign the image with keyless OIDC signing (Sigstore)
+      # Sign the image with keyless OIDC signing (Sigstore / Fulcio + Rekor).
+      # COSIGN_EXPERIMENTAL is no longer needed in Cosign v2+; keyless is the default.
       - name: Sign container image (keyless)
         if: github.event_name != 'pull_request'
-        env:
-          COSIGN_EXPERIMENTAL: "1"
         run: |
           cosign sign --yes \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
@@ -148,18 +147,23 @@ jobs:
           upload-artifact: true
           upload-artifact-retention: 30
 
-      # Attach SBOM to image with Cosign
-      - name: Attach SBOM to image
+      # Create a verifiable attestation that cryptographically links the SBOM to the image digest.
+      # cosign attest is the modern replacement for the deprecated `cosign attach sbom` —
+      # attestations are discoverable via `cosign verify-attestation` and stored in Rekor.
+      - name: Attest SBOM to image
         if: github.event_name != 'pull_request'
         run: |
-          cosign attach sbom \
-            --sbom sbom.spdx.json \
-            --type spdx \
+          cosign attest --yes \
+            --predicate sbom.spdx.json \
+            --type spdxjson \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
 
       # Scan with Trivy and upload SARIF
+      # Pin to a specific version tag — @master is a mutable ref that can silently introduce
+      # breaking changes or supply-chain risk between runs. Trivy's ecosystem was temporarily
+      # compromised in March 2026 (GHSA-69fq-xp46-6x23), which is exactly why @master is dangerous.
       - name: Run Trivy vulnerability scan
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@v0.35.0
         with:
           image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
           format: sarif

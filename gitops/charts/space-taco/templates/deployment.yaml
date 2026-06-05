@@ -34,7 +34,10 @@ spec:
         - name: {{ .Chart.Name }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
-          image: "{{ .Values.image.registry }}/{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          {{- $repo := .Values.image.repository }}
+          {{- $tag  := .Values.image.tag | default .Chart.AppVersion }}
+          {{- $image := ternary (printf "%s/%s:%s" .Values.image.registry $repo $tag) (printf "%s:%s" $repo $tag) (ne .Values.image.registry "") }}
+          image: {{ $image | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http

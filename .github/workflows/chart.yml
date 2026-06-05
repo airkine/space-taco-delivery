@@ -67,14 +67,43 @@ jobs:
         id: push
         run: |
           CHART_VERSION=$(helm show chart ${{ env.CHART_PATH }} | grep '^version:' | awk '{print $2}')
-          helm push ${{ steps.package.outputs.chart_pkg }} \
-            oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/space-taco-delivery/charts
+
+          # Capture full push output so we can parse the immutable digest.
+          # helm push prints two lines: "Pushed: <ref>" and "Digest: sha256:<hash>"
+          PUSH_OUTPUT=$(helm push ${{ steps.package.outputs.chart_pkg }} \
+            oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/space-taco-delivery/charts 2>&1)
+          echo "${PUSH_OUTPUT}"
+
+          # Extract the digest — we sign by digest, not by mutable tag, so the signature
+          # stays valid even if the tag is later repointed.
+          CHART_DIGEST=$(echo "${PUSH_OUTPUT}" | grep -oP 'Digest: \K\S+')
 
           echo "chart_version=${CHART_VERSION}" >> $GITHUB_OUTPUT
+          echo "chart_digest=${CHART_DIGEST}" >> $GITHUB_OUTPUT
 
+      # Sign by immutable digest, not mutable tag.
+      # COSIGN_EXPERIMENTAL is no longer needed in Cosign v2+; keyless is the default.
       - name: Sign the chart (keyless)
-        env:
-          COSIGN_EXPERIMENTAL: "1"
         run: |
           cosign sign --yes \
-            ${{ env.REGISTRY }}/${{ github.repository_owner }}/space-taco-delivery/charts/space-taco:${{ steps.push.outputs.chart_version }}
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/space-taco-delivery/charts/space-taco@${{ steps.push.outputs.chart_digest }}
+
+      # Generate an SBOM for the Helm chart package (.tgz) using Syft.
+      # This gives consumers a verifiable bill of materials for the chart itself.
+      - name: Generate chart SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: ${{ steps.package.outputs.chart_pkg }}
+          format: spdx-json
+          output-file: chart-sbom.spdx.json
+          upload-artifact: true
+          upload-artifact-retention: 30
+
+      # Attest the SBOM against the chart's immutable digest so it is verifiable
+      # via `cosign verify-attestation` and recorded in Rekor.
+      - name: Attest chart SBOM
+        run: |
+          cosign attest --yes \
+            --predicate chart-sbom.spdx.json \
+            --type spdxjson \
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/space-taco-delivery/charts/space-taco@${{ steps.push.outputs.chart_digest }}

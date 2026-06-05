@@ -6,7 +6,7 @@ A minimal Go HTTP microservice for managing intergalactic taco orders. Built wit
 
 ### Project layout
 
-```
+```text
 app/
 ├── cmd/server/main.go          # Entry point — wires up server, routes, graceful shutdown
 ├── internal/
@@ -19,10 +19,24 @@ app/
 └── go.mod
 ```
 
+### UI — "Launch Your Order" form
+
+The order form fields use pre-populated dropdowns instead of free-text inputs so users pick from a curated list of space-themed options:
+
+| Field | Options |
+| ------- | --------- |
+| **Commander ID** | 10 funny space aliases (e.g. `DARTH-TACO-LORD`, `ADMIRAL-NACHO`, `SPACE-COWBOY-007`) |
+| **Destination Planet** | 10 planets with humorous subtitles (e.g. `Vulcan (Logically Delicious)`, `Uranus (We All Giggled)`) |
+| **Galactic Quadrant** | 8 quadrant labels (e.g. `Nacho Nebula (Dense & Cheesy)`, `Burrito Belt (High Traffic Zone)`) |
+
+Commander ID and Destination Planet are required; Galactic Quadrant is optional. All dropdowns default to an empty placeholder — if the user doesn't pick, the existing validation toast fires.
+
+---
+
 ### API routes
 
 | Method | Path | Description |
-|--------|------|-------------|
+| -------- | ------ | ------------- |
 | `GET` | `/` | Browser UI (menu, order form, order tracker) |
 | `GET` | `/healthz` | Liveness probe |
 | `GET` | `/readyz` | Readiness probe |
@@ -52,10 +66,10 @@ docker compose up --build
 
 This builds the image and starts two services:
 
-| Service | Port | Notes |
-|---------|------|-------|
-| `space-taco` | `8080` | Go app, built from `app/Dockerfile` |
-| `redis` | `6379` | Redis 7; app connects via `REDIS_URL` |
+| Service       | Port   | Notes                                   |
+| ------------- | ------ | --------------------------------------- |
+| `space-taco`  | `8080` | Go app, built from `app/Dockerfile`     |
+| `redis`       | `6379` | Redis 7; app connects via `REDIS_URL`   |
 
 The app waits for Redis to pass its healthcheck before starting. To run without Redis (MemoryStore only), omit the `REDIS_URL` environment variable or set it to empty.
 
@@ -151,7 +165,7 @@ curl -X PATCH http://localhost:8080/api/v1/orders/TACO-000001/status \
 ### Available fillings
 
 | Key | Name |
-|-----|------|
+| ----- | ------ |
 | `nebula_beef` | Nebula Beef Supreme |
 | `stardust_shrimp` | Stardust Shrimp Fiesta |
 | `moon_mushroom_veg` | Moon Mushroom Vegan |

@@ -27,3 +27,4 @@ deploy/kind/.kubeconfig
 # OS
 .DS_Store
 Thumbs.db
+CLAUDE.md
