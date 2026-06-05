@@ -168,6 +168,11 @@ jobs:
       # breaking changes or supply-chain risk between runs. Trivy's ecosystem was temporarily
       # compromised in March 2026 (GHSA-69fq-xp46-6x23), which is exactly why @master is dangerous.
       - name: Run Trivy vulnerability scan
+        # Skipped on pull_request — the image is built but not pushed to GHCR on PRs, so
+        # there is nothing for Trivy to pull by digest. Without this guard the step fails
+        # immediately (no image in registry) and never writes trivy-results.sarif, causing
+        # the SARIF upload to also fail. The scan gate is meaningful on main where the image
+        # is actually published and could reach a cluster.
         # ignore-unfixed: only fail on CVEs that have an available fix.
         # Without this, any newly-discovered CVE in distroless/debian12 or a Go dep (even one
         # with no upstream patch yet) will break the build with no remediation path.
@@ -175,6 +180,7 @@ jobs:
         # Note: go.mod declares `go 1.24` but the binary is compiled with golang:1.26-alpine —
         # Trivy reads the Go version from the binary, not go.mod, so the CVEs fixed in 1.26
         # (CVE-2026-42504 etc.) are correctly seen as resolved.
+        if: github.event_name != 'pull_request'
         uses: aquasecurity/trivy-action@v0.35.0
         with:
           image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
@@ -188,8 +194,10 @@ jobs:
           TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload Trivy SARIF
-        if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        # Only runs when Trivy ran (non-PR) and always uploads even if Trivy found CVEs,
+        # so Security tab always has fresh results. CodeQL action v4 required — v3 deprecated Dec 2026.
+        if: github.event_name != 'pull_request'
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-results.sarif
 
