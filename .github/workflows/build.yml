@@ -10,6 +10,7 @@ on:
     branches: [main]
     paths:
       - "app/**"
+      - ".github/workflows/build.yml"  # trigger on workflow changes too, matching the push filter
   workflow_dispatch:
     inputs:
       push_image:
