@@ -126,9 +126,13 @@ docker build \
 
 ---
 
+## Go version note
+
+`go.mod` declares `go 1.24` as the minimum language version. The Docker image (`golang:1.26-alpine`) intentionally uses Go 1.26 to pick up stdlib CVE fixes — that is a runtime/container concern independent of the language version declared in `go.mod`. The `go` directive is pinned to 1.24 so that `golangci-lint` (currently built with Go 1.24) can analyze the module without erroring out.
+
 ## Running locally without Docker
 
-Requires Go 1.22+.
+Requires Go 1.24+.
 
 ```bash
 cd app

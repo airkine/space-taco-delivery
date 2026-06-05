@@ -49,6 +49,10 @@ jobs:
           cache-dependency-path: app/go.sum
 
       - name: Run golangci-lint
+        # golangci-lint v1.64.x is built with Go 1.24. It refuses to analyze modules whose
+        # `go` directive is newer than its own build version (exit 3). app/go.mod is pinned
+        # to go 1.24 to satisfy this constraint while still building the container with
+        # golang:1.26-alpine (CVE fixes live in the runtime image, not the go directive).
         uses: golangci/golangci-lint-action@v6
         with:
           working-directory: app
@@ -163,6 +167,13 @@ jobs:
       # breaking changes or supply-chain risk between runs. Trivy's ecosystem was temporarily
       # compromised in March 2026 (GHSA-69fq-xp46-6x23), which is exactly why @master is dangerous.
       - name: Run Trivy vulnerability scan
+        # ignore-unfixed: only fail on CVEs that have an available fix.
+        # Without this, any newly-discovered CVE in distroless/debian12 or a Go dep (even one
+        # with no upstream patch yet) will break the build with no remediation path.
+        # exit-code "1" still blocks on any fixable CRITICAL/HIGH, so the gate remains meaningful.
+        # Note: go.mod declares `go 1.24` but the binary is compiled with golang:1.26-alpine —
+        # Trivy reads the Go version from the binary, not go.mod, so the CVEs fixed in 1.26
+        # (CVE-2026-42504 etc.) are correctly seen as resolved.
         uses: aquasecurity/trivy-action@v0.35.0
         with:
           image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
@@ -170,6 +181,7 @@ jobs:
           output: trivy-results.sarif
           severity: CRITICAL,HIGH
           exit-code: "1"
+          ignore-unfixed: true
         env:
           TRIVY_USERNAME: ${{ github.actor }}
           TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}

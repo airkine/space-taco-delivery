@@ -174,7 +174,7 @@ Required secrets to add after repo creation:
 Every artifact built in CI is:
 
 1. **Built** in a multi-stage Dockerfile → distroless `nonroot` final image
-2. **Scanned** with Trivy pinned to `v0.35.0` (CRITICAL/HIGH gate; `@master` removed after the March 2026 Trivy supply-chain incident)
+2. **Scanned** with Trivy pinned to `v0.35.0` (CRITICAL/HIGH gate, `ignore-unfixed: true` so only patchable CVEs break the build; `@master` removed after the March 2026 Trivy supply-chain incident)
 3. **Signed** with Cosign keyless signing (GitHub OIDC → Fulcio CA → Sigstore Rekor transparency log; no long-lived keys)
 4. **SBOM generated** in SPDX-JSON via both BuildKit (`sbom: true`) and Syft, then **attested** with `cosign attest` (modern replacement for the deprecated `cosign attach sbom`)
 5. **Helm chart signed and SBOM-attested** — chart is signed by immutable digest (not mutable tag), and a Syft-generated SBOM is attested against the chart digest
