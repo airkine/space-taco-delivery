@@ -8,23 +8,23 @@ import (
 type TacoFilling string
 
 const (
-	FillingNebulaBeef     TacoFilling = "nebula_beef"
-	FillingStardustShrimp TacoFilling = "stardust_shrimp"
+	FillingNebulaBeef      TacoFilling = "nebula_beef"
+	FillingStardustShrimp  TacoFilling = "stardust_shrimp"
 	FillingMoonMushroomVeg TacoFilling = "moon_mushroom_veg"
-	FillingBlackHoleBBQ   TacoFilling = "black_hole_bbq"
-	FillingCometChorizo   TacoFilling = "comet_chorizo"
+	FillingBlackHoleBBQ    TacoFilling = "black_hole_bbq"
+	FillingCometChorizo    TacoFilling = "comet_chorizo"
 )
 
 // OrderStatus tracks the intergalactic delivery pipeline
 type OrderStatus string
 
 const (
-	StatusReceived    OrderStatus = "received"       // Order beamed in
-	StatusPreparing   OrderStatus = "preparing"      // Kitchen crew assembling
-	StatusLaunched    OrderStatus = "launched"       // Delivery pod launched
-	StatusInOrbit     OrderStatus = "in_orbit"       // Approaching destination
-	StatusDelivered   OrderStatus = "delivered"      // Nom nom nom
-	StatusAborted     OrderStatus = "aborted"        // Asteroid interference
+	StatusReceived  OrderStatus = "received"  // Order beamed in
+	StatusPreparing OrderStatus = "preparing" // Kitchen crew assembling
+	StatusLaunched  OrderStatus = "launched"  // Delivery pod launched
+	StatusInOrbit   OrderStatus = "in_orbit"  // Approaching destination
+	StatusDelivered OrderStatus = "delivered" // Nom nom nom
+	StatusAborted   OrderStatus = "aborted"   // Asteroid interference
 )
 
 // TacoItem is a single taco in the order
@@ -36,16 +36,16 @@ type TacoItem struct {
 
 // Order represents a taco delivery order
 type Order struct {
-	ID          string      `json:"id"`
-	CustomerID  string      `json:"customer_id"`
-	Planet      string      `json:"planet"`           // Delivery destination
-	GalacticQuadrant string `json:"galactic_quadrant"`
-	Items       []TacoItem  `json:"items"`
-	Status      OrderStatus `json:"status"`
-	TotalTacos  int         `json:"total_tacos"`
-	CreatedAt   time.Time   `json:"created_at"`
-	UpdatedAt   time.Time   `json:"updated_at"`
-	EstimatedETA *time.Time `json:"estimated_eta,omitempty"`
+	ID               string      `json:"id"`
+	CustomerID       string      `json:"customer_id"`
+	Planet           string      `json:"planet"` // Delivery destination
+	GalacticQuadrant string      `json:"galactic_quadrant"`
+	Items            []TacoItem  `json:"items"`
+	Status           OrderStatus `json:"status"`
+	TotalTacos       int         `json:"total_tacos"`
+	CreatedAt        time.Time   `json:"created_at"`
+	UpdatedAt        time.Time   `json:"updated_at"`
+	EstimatedETA     *time.Time  `json:"estimated_eta,omitempty"`
 }
 
 // MenuItem represents an item on the galactic menu

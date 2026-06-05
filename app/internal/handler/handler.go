@@ -31,7 +31,7 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 }
 
 // Healthz is a liveness probe endpoint
-func (h *Handler) Healthz(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) Healthz(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "ok",
 		"message": "🌮 Taco engines nominal",
@@ -39,7 +39,7 @@ func (h *Handler) Healthz(w http.ResponseWriter, r *http.Request) {
 }
 
 // Readyz is a readiness probe endpoint
-func (h *Handler) Readyz(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) Readyz(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "ready",
 		"message": "🚀 Ready to accept taco orders",
@@ -47,7 +47,7 @@ func (h *Handler) Readyz(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetMenu returns the galactic taco menu
-func (h *Handler) GetMenu(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) GetMenu(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"menu":    model.GalacticMenu,
 		"message": "Welcome to Space Taco Delivery — Est. Stardate 2350",
@@ -55,7 +55,7 @@ func (h *Handler) GetMenu(w http.ResponseWriter, r *http.Request) {
 }
 
 // ListOrders returns all orders
-func (h *Handler) ListOrders(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) ListOrders(w http.ResponseWriter, _ *http.Request) {
 	orders, err := h.store.ListOrders()
 	if err != nil {
 		h.log.Error("list orders failed", "error", err)
