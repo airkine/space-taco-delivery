@@ -52,7 +52,7 @@ jobs:
         # golangci-lint v1.64.x is built with Go 1.24. It refuses to analyze modules whose
         # `go` directive is newer than its own build version (exit 3). app/go.mod is pinned
         # to go 1.24 to satisfy this constraint while still building the container with
-        # golang:1.26-alpine (CVE fixes live in the runtime image, not the go directive).
+        # golang:1.26-alpine (CVE fixes live in the runtime image, not the go directive)
         uses: golangci/golangci-lint-action@v6
         with:
           working-directory: app
