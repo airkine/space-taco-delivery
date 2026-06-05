@@ -68,6 +68,13 @@ resource "github_branch_protection" "main" {
     dismiss_stale_reviews           = true
     require_code_owner_reviews      = true
     required_approving_review_count = 1
+
+    # Allow github-actions[bot] to merge without human review.
+    # This is scoped exclusively to the automated GitOps digest-update PRs.
+    # Bypassing PR review also waives required status checks for this actor,
+    # so the squash-merge fires immediately after the PR is opened.
+    # Human PRs are unaffected — they still require 1 approving review.
+    pull_request_bypassers = ["app/github-actions"]
   }
 
   enforce_admins                  = false

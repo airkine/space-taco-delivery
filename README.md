@@ -9,7 +9,7 @@ A fully production-patterned microservice demonstrating GitOps best practices:
 
 ## Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────────────┐
 │                     GitHub Actions                      │
 │  ┌──────────┐  ┌──────────┐  ┌─────────────────────┐  │
@@ -41,7 +41,7 @@ A fully production-patterned microservice demonstrating GitOps best practices:
 
 ## Repo Structure
 
-```
+```text
 .
 ├── app/                        # Go microservice
 │   ├── cmd/server/main.go      # Entry point
@@ -111,6 +111,7 @@ brew install fluxcd/tap/flux
 ```
 
 This will:
+
 1. Create a 3-node kind cluster
 2. Build the Go app image locally
 3. Load it into the cluster (no registry needed)
@@ -165,11 +166,13 @@ terraform apply
 Required secrets to add after repo creation:
 
 | Secret | Description |
-|---|---|
+| --- | --- |
 | `TF_GITHUB_TOKEN` | GitHub PAT with `repo` + `admin:org` scopes |
 | `COSIGN_PASSWORD` | Cosign key password (optional for keyless) |
 
 ## Supply Chain Security
+
+The `main` branch enforces `require_signed_commits`, required PR review, and required status checks. The automated GitOps digest update works within these rules: it pushes to an unprotected branch, opens a PR, and squash-merges via the GitHub API — GitHub signs that merge commit server-side, satisfying `require_signed_commits`. `github-actions[bot]` is in `pull_request_bypassers` (Terraform) so it merges without a human reviewer.
 
 Every artifact built in CI is:
 
@@ -211,7 +214,7 @@ cosign verify-attestation \
 ## API Reference
 
 | Method | Path | Description |
-|---|---|---|
+| --- | --- | --- |
 | `GET` | `/` | Browser UI — menu, order form, order tracker |
 | `GET` | `/healthz` | Liveness probe |
 | `GET` | `/readyz` | Readiness probe |
