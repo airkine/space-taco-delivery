@@ -52,7 +52,7 @@ jobs:
         uses: golangci/golangci-lint-action@v6
         with:
           working-directory: app
-          version: v1.65.0  # Changed from 'latest' to explicit version
+          version: latest
 
       - name: Run tests
         run: go test -race -coverprofile=coverage.out ./...
