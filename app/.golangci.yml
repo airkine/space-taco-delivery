@@ -1,18 +1,20 @@
-version: "2"
+run:
+  # Timeout for the entire lint run
+  timeout: 5m
 
 linters:
   enable:
-    - errcheck
-    - gosimple
-    - govet
-    - ineffassign
-    - staticcheck
-    - unused
-    - gosec
-    - gofmt
-    - revive
-    - bodyclose
-    - noctx
+    - errcheck       # check for unchecked errors
+    - gosimple       # simplification suggestions
+    - govet          # reports suspicious constructs
+    - ineffassign    # detects ineffectual assignments
+    - staticcheck    # static analysis (supersedes 'unused' in v1.54+)
+    - gosec          # security checks
+    - gofmt          # formatting check
+    - revive         # drop-in replacement for golint
+    - bodyclose      # checks HTTP response body is closed
+    - noctx          # finds HTTP requests without context
 
 issues:
+  # 0 means unlimited — show all occurrences of the same issue
   max-same-issues: 0
