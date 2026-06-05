@@ -1,8 +1,10 @@
 # syntax=docker/dockerfile:1
 # =============================================================================
 # Stage 1: Build — compile the Go binary
+# Pinned to 1.26 to resolve HIGH stdlib CVEs fixed in Go 1.26.4+
+# (CVE-2026-42504, CVE-2026-42499, CVE-2026-39836, and others)
 # =============================================================================
-FROM golang:1.24-alpine AS builder
+FROM golang:1.26-alpine AS builder
 
 RUN apk update && apk upgrade --no-cache
 
@@ -24,7 +26,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
 # =============================================================================
 # Stage 2: Security scan layer — run govulncheck
 # =============================================================================
-FROM golang:1.24-alpine AS scanner
+FROM golang:1.26-alpine AS scanner
 RUN apk update && apk upgrade --no-cache && go install golang.org/x/vuln/cmd/govulncheck@latest
 WORKDIR /scan
 COPY --from=builder /build .
