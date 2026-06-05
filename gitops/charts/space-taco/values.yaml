@@ -8,7 +8,7 @@ image:
   repository: your-org/space-taco-delivery/space-taco-delivery
   pullPolicy: IfNotPresent
   # Updated by the CI pipeline on each push to main
-  tag: "latest"
+  tag: "sha-0f3e05b"
 
 imagePullSecrets: []
 nameOverride: ""
