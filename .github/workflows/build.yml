@@ -102,10 +102,12 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # Semantic-version tags (matching the GitHub release tag) are added
+          # post-build by the `release` job via `docker buildx imagetools create`,
+          # once the next version has been computed from Conventional Commits.
           tags: |
             type=sha,prefix=sha-,format=short
             type=ref,event=branch
-            type=semver,pattern={{version}}
             type=raw,value=latest,enable={{is_default_branch}}
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
@@ -218,3 +220,78 @@ jobs:
             --predicate sbom.spdx.json \
             --type spdxjson \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-main.outputs.digest }}
+
+  # ---------------------------------------------------------------------------
+  # Determine next version (Conventional Commits + SemVer)
+  # ---------------------------------------------------------------------------
+  version:
+    name: Determine Next Version
+    needs: test
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      new_tag: ${{ steps.tag_version.outputs.new_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history & tags needed to find the previous release
+
+      # Inspects commit messages since the last `vX.Y.Z` tag and computes the next
+      # SemVer tag: `fix:` -> patch, `feat:` -> minor, `BREAKING CHANGE`/`!` -> major.
+      # dry_run: the tag itself is created by the GitHub release below, not here.
+      - name: Compute next version
+        id: tag_version
+        uses: mathieudutour/github-tag-action@v6.2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          default_bump: patch
+          dry_run: true
+
+  # ---------------------------------------------------------------------------
+  # Tag & Release (main branch only)
+  # ---------------------------------------------------------------------------
+  release:
+    name: Tag & Release
+    needs: [build, version]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # to create the tag & release
+      packages: write  # to add the version tag to the image in GHCR
+    steps:
+      # Creating a release with a tag_name that doesn't exist yet also creates the
+      # git tag, pointed at target_commitish. generate_release_notes summarizes the
+      # PRs merged since the previous release.
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.new_tag }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+          body: |
+            **Image**
+            ```
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.version.outputs.new_tag }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build.outputs.image-digest }}
+            ```
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Re-tag the already-built, signed & attested multi-arch image (by digest) with
+      # the release version. No rebuild — just an additional manifest reference, so
+      # the image tag matches the git tag/release exactly. Cosign signatures and SBOM
+      # attestations are keyed to the digest and remain valid under the new tag.
+      - name: Tag image with release version
+        run: |
+          docker buildx imagetools create \
+            --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.version.outputs.new_tag }} \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build.outputs.image-digest }}
