@@ -35,11 +35,6 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
-func (h *Handler) notFound(w http.ResponseWriter, r *http.Request) {
-	h.log.Debug("route not found", "path", r.URL.Path, "method", r.Method)
-	h.writeNotFound(w)
-}
-
 func (h *Handler) writeNotFound(w http.ResponseWriter) {
 	writeError(w, http.StatusNotFound, "resource not found")
 }

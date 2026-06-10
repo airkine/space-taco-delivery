@@ -76,7 +76,7 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     outputs:
-      image-digest: ${{ steps.build.outputs.digest }}
+      image-digest: ${{ steps.build-main.outputs.digest }}
       image-ref: ${{ steps.meta.outputs.tags }}
 
     steps:
@@ -110,14 +110,35 @@ jobs:
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
 
+      # PR builds: single-platform, loaded into the local Docker daemon (not pushed)
+      # so Trivy can scan it below before anything reaches the registry.
+      - name: Build image (PR validation)
+        if: github.event_name == 'pull_request'
+        id: build-pr
+        uses: docker/build-push-action@v6
+        with:
+          context: app
+          file: app/Dockerfile
+          platforms: linux/amd64
+          load: true
+          tags: space-taco-delivery:pr-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            COMMIT=${{ github.sha }}
+          provenance: false
+          sbom: false
+
       - name: Build and push image
-        id: build
+        if: github.event_name != 'pull_request'
+        id: build-main
         uses: docker/build-push-action@v6
         with:
           context: app
           file: app/Dockerfile
           platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
@@ -127,6 +148,41 @@ jobs:
             COMMIT=${{ github.sha }}
           provenance: true  # Generates SLSA provenance attestation
           sbom: true        # Generates OCI-attached SBOM
+
+      # Scan with Trivy before anything is pushed, signed, or attested.
+      # On PRs this scans the locally-loaded image built above; on main it scans the
+      # just-pushed image by digest. Either way a fixable CRITICAL/HIGH CVE fails the
+      # job before the signing/SBOM/attestation/GitOps steps run.
+      # Pin to a specific version tag — @master is a mutable ref that can silently introduce
+      # breaking changes or supply-chain risk between runs. Trivy's ecosystem was temporarily
+      # compromised in March 2026 (GHSA-69fq-xp46-6x23), which is exactly why @master is dangerous.
+      # ignore-unfixed: only fail on CVEs that have an available fix.
+      # Without this, any newly-discovered CVE in distroless/debian12 or a Go dep (even one
+      # with no upstream patch yet) will break the build with no remediation path.
+      # exit-code "1" still blocks on any fixable CRITICAL/HIGH, so the gate remains meaningful.
+      # Note: go.mod declares `go 1.24` but the binary is compiled with golang:1.26-alpine —
+      # Trivy reads the Go version from the binary, not go.mod, so the CVEs fixed in 1.26
+      # (CVE-2026-42504 etc.) are correctly seen as resolved.
+      - name: Run Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@v0.35.0
+        with:
+          image-ref: ${{ github.event_name == 'pull_request' && format('space-taco-delivery:pr-{0}', github.sha) || format('{0}/{1}@{2}', env.REGISTRY, env.IMAGE_NAME, steps.build-main.outputs.digest) }}
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          ignore-unfixed: true
+        env:
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Trivy SARIF
+        # always() so results land in the Security tab / PR annotations even when Trivy
+        # found CVEs and failed the step above. CodeQL action v4 required — v3 deprecated Dec 2026.
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-results.sarif
 
       # Install Cosign for keyless signing
       - name: Install Cosign
@@ -139,14 +195,14 @@ jobs:
         if: github.event_name != 'pull_request'
         run: |
           cosign sign --yes \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-main.outputs.digest }}
 
       # Generate a standalone SBOM with Syft and attach to image
       - name: Generate SBOM with Syft
         if: github.event_name != 'pull_request'
         uses: anchore/sbom-action@v0
         with:
-          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-main.outputs.digest }}
           format: spdx-json
           output-file: sbom.spdx.json
           upload-artifact: true
@@ -161,45 +217,7 @@ jobs:
           cosign attest --yes \
             --predicate sbom.spdx.json \
             --type spdxjson \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
-
-      # Scan with Trivy and upload SARIF
-      # Pin to a specific version tag — @master is a mutable ref that can silently introduce
-      # breaking changes or supply-chain risk between runs. Trivy's ecosystem was temporarily
-      # compromised in March 2026 (GHSA-69fq-xp46-6x23), which is exactly why @master is dangerous.
-      - name: Run Trivy vulnerability scan
-        # Skipped on pull_request — the image is built but not pushed to GHCR on PRs, so
-        # there is nothing for Trivy to pull by digest. Without this guard the step fails
-        # immediately (no image in registry) and never writes trivy-results.sarif, causing
-        # the SARIF upload to also fail. The scan gate is meaningful on main where the image
-        # is actually published and could reach a cluster.
-        # ignore-unfixed: only fail on CVEs that have an available fix.
-        # Without this, any newly-discovered CVE in distroless/debian12 or a Go dep (even one
-        # with no upstream patch yet) will break the build with no remediation path.
-        # exit-code "1" still blocks on any fixable CRITICAL/HIGH, so the gate remains meaningful.
-        # Note: go.mod declares `go 1.24` but the binary is compiled with golang:1.26-alpine —
-        # Trivy reads the Go version from the binary, not go.mod, so the CVEs fixed in 1.26
-        # (CVE-2026-42504 etc.) are correctly seen as resolved.
-        if: github.event_name != 'pull_request'
-        uses: aquasecurity/trivy-action@v0.35.0
-        with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
-          format: sarif
-          output: trivy-results.sarif
-          severity: CRITICAL,HIGH
-          exit-code: "1"
-          ignore-unfixed: true
-        env:
-          TRIVY_USERNAME: ${{ github.actor }}
-          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload Trivy SARIF
-        # Only runs when Trivy ran (non-PR) and always uploads even if Trivy found CVEs,
-        # so Security tab always has fresh results. CodeQL action v4 required — v3 deprecated Dec 2026.
-        if: github.event_name != 'pull_request'
-        uses: github/codeql-action/upload-sarif@v4
-        with:
-          sarif_file: trivy-results.sarif
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-main.outputs.digest }}
 
   # ---------------------------------------------------------------------------
   # Update GitOps manifest digest
