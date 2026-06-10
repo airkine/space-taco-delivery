@@ -172,7 +172,7 @@ Required secrets to add after repo creation:
 
 ## Supply Chain Security
 
-The `main` branch enforces `require_signed_commits`, required PR review, and required status checks. The automated GitOps digest update works within these rules: it pushes to an unprotected branch, opens a PR, and squash-merges via the GitHub API — GitHub signs that merge commit server-side, satisfying `require_signed_commits`. `github-actions[bot]` is in `pull_request_bypassers` (Terraform) so it merges without a human reviewer.
+The `main` branch enforces `require_signed_commits`, required PR review, and required status checks, with no bypass for `github-actions[bot]`. CI never commits or pushes to the repo — after a build, a human bumps the image tag in `gitops/charts/space-taco/values.yaml` via a signed, reviewed PR.
 
 Every artifact built in CI is:
 
