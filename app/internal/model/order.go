@@ -1,10 +1,17 @@
 package model
 
 import (
+	"errors"
+	"fmt"
 	"time"
 )
 
-// TacoFilling represents a taco filling option from the galactic menu
+var (
+	ErrInvalidOrderRequest  = errors.New("invalid order request")
+	ErrInvalidStatusRequest = errors.New("invalid status request")
+)
+
+// TacoFilling represents a taco filling option from the galactic menu.
 type TacoFilling string
 
 const (
@@ -15,7 +22,7 @@ const (
 	FillingCometChorizo    TacoFilling = "comet_chorizo"
 )
 
-// OrderStatus tracks the intergalactic delivery pipeline
+// OrderStatus tracks the intergalactic delivery pipeline.
 type OrderStatus string
 
 const (
@@ -27,18 +34,18 @@ const (
 	StatusAborted   OrderStatus = "aborted"   // Asteroid interference
 )
 
-// TacoItem is a single taco in the order
+// TacoItem is a single taco in the order.
 type TacoItem struct {
 	Filling  TacoFilling `json:"filling"`
 	Quantity int         `json:"quantity"`
-	ExtraHot bool        `json:"extra_hot"` // Solar-flare salsa
+	ExtraHot bool        `json:"extra_hot"`
 }
 
-// Order represents a taco delivery order
+// Order represents a taco delivery order.
 type Order struct {
 	ID               string      `json:"id"`
 	CustomerID       string      `json:"customer_id"`
-	Planet           string      `json:"planet"` // Delivery destination
+	Planet           string      `json:"planet"`
 	GalacticQuadrant string      `json:"galactic_quadrant"`
 	Items            []TacoItem  `json:"items"`
 	Status           OrderStatus `json:"status"`
@@ -48,16 +55,16 @@ type Order struct {
 	EstimatedETA     *time.Time  `json:"estimated_eta,omitempty"`
 }
 
-// MenuItem represents an item on the galactic menu
+// MenuItem represents an item on the galactic menu.
 type MenuItem struct {
 	Filling     TacoFilling `json:"filling"`
 	Name        string      `json:"name"`
 	Description string      `json:"description"`
-	SpiceLevel  int         `json:"spice_level"` // 1-5 suns
+	SpiceLevel  int         `json:"spice_level"`
 	Available   bool        `json:"available"`
 }
 
-// CreateOrderRequest is the inbound order payload
+// CreateOrderRequest is the inbound order payload.
 type CreateOrderRequest struct {
 	CustomerID       string     `json:"customer_id"`
 	Planet           string     `json:"planet"`
@@ -65,12 +72,91 @@ type CreateOrderRequest struct {
 	Items            []TacoItem `json:"items"`
 }
 
-// UpdateStatusRequest updates an order's status
+// UpdateStatusRequest updates an order's status.
 type UpdateStatusRequest struct {
 	Status OrderStatus `json:"status"`
 }
 
-// GalacticMenu is the full menu
+func (req CreateOrderRequest) Validate() error {
+	if req.CustomerID == "" {
+		return fmt.Errorf("%w: customer_id is required", ErrInvalidOrderRequest)
+	}
+	if req.Planet == "" {
+		return fmt.Errorf("%w: planet is required", ErrInvalidOrderRequest)
+	}
+	if len(req.Items) == 0 {
+		return fmt.Errorf("%w: at least one item is required", ErrInvalidOrderRequest)
+	}
+	for _, item := range req.Items {
+		if item.Filling == "" {
+			return fmt.Errorf("%w: item filling is required", ErrInvalidOrderRequest)
+		}
+		if item.Quantity <= 0 {
+			return fmt.Errorf("%w: item quantity must be greater than zero", ErrInvalidOrderRequest)
+		}
+	}
+	return nil
+}
+
+func (req UpdateStatusRequest) Validate() error {
+	if !req.Status.IsValid() {
+		return fmt.Errorf("%w: status is invalid", ErrInvalidStatusRequest)
+	}
+	return nil
+}
+
+func (s OrderStatus) IsValid() bool {
+	switch s {
+	case StatusReceived, StatusPreparing, StatusLaunched, StatusInOrbit, StatusDelivered, StatusAborted:
+		return true
+	default:
+		return false
+	}
+}
+
+func NewOrder(req CreateOrderRequest, id string, now time.Time) *Order {
+	total := 0
+	for _, item := range req.Items {
+		total += item.Quantity
+	}
+
+	eta := now.Add(30 * time.Minute)
+	items := make([]TacoItem, len(req.Items))
+	copy(items, req.Items)
+
+	return &Order{
+		ID:               id,
+		CustomerID:       req.CustomerID,
+		Planet:           req.Planet,
+		GalacticQuadrant: req.GalacticQuadrant,
+		Items:            items,
+		Status:           StatusReceived,
+		TotalTacos:       total,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+		EstimatedETA:     &eta,
+	}
+}
+
+func (o *Order) Clone() *Order {
+	if o == nil {
+		return nil
+	}
+
+	items := make([]TacoItem, len(o.Items))
+	copy(items, o.Items)
+
+	clone := *o
+	clone.Items = items
+	if o.EstimatedETA != nil {
+		eta := *o.EstimatedETA
+		clone.EstimatedETA = &eta
+	}
+
+	return &clone
+}
+
+// GalacticMenu is the full menu.
 var GalacticMenu = []MenuItem{
 	{
 		Filling:     FillingNebulaBeef,

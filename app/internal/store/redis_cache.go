@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -17,11 +18,12 @@ const cacheTTL = 5 * time.Minute
 type RedisCache struct {
 	inner  Store
 	client *redis.Client
+	log    *slog.Logger
 }
 
 // NewRedisCache connects to Redis at redisURL and returns a caching Store.
 // Returns an error if the connection cannot be established within 3 seconds.
-func NewRedisCache(inner Store, redisURL string) (*RedisCache, error) {
+func NewRedisCache(inner Store, redisURL string, log *slog.Logger) (*RedisCache, error) {
 	opts, err := redis.ParseURL(redisURL)
 	if err != nil {
 		return nil, err
@@ -33,7 +35,7 @@ func NewRedisCache(inner Store, redisURL string) (*RedisCache, error) {
 		client.Close()
 		return nil, err
 	}
-	return &RedisCache{inner: inner, client: client}, nil
+	return &RedisCache{inner: inner, client: client, log: log}, nil
 }
 
 // Close releases the Redis connection.
@@ -45,43 +47,58 @@ func (c *RedisCache) cacheKey(id string) string {
 	return "order:" + id
 }
 
-func (c *RedisCache) cacheGet(ctx context.Context, id string) (*model.Order, bool) {
+func (c *RedisCache) cacheGet(ctx context.Context, id string) (*model.Order, bool, error) {
 	data, err := c.client.Get(ctx, c.cacheKey(id)).Bytes()
 	if err != nil {
-		return nil, false
+		if err == redis.Nil {
+			return nil, false, nil
+		}
+		return nil, false, err
 	}
+
 	var o model.Order
 	if err := json.Unmarshal(data, &o); err != nil {
-		return nil, false
+		return nil, false, err
 	}
-	return &o, true
+	return o.Clone(), true, nil
 }
 
 func (c *RedisCache) cacheSet(ctx context.Context, o *model.Order) {
-	data, err := json.Marshal(o)
-	if err != nil {
+	if o == nil {
 		return
 	}
-	c.client.Set(ctx, c.cacheKey(o.ID), data, cacheTTL)
+
+	data, err := json.Marshal(o)
+	if err != nil {
+		c.log.Warn("redis cache marshal failed", "error", err, "order_id", o.ID)
+		return
+	}
+
+	if err := c.client.Set(ctx, c.cacheKey(o.ID), data, cacheTTL).Err(); err != nil {
+		c.log.Warn("redis cache set failed", "error", err, "order_id", o.ID)
+	}
 }
 
-func (c *RedisCache) CreateOrder(req model.CreateOrderRequest) (*model.Order, error) {
-	o, err := c.inner.CreateOrder(req)
+func (c *RedisCache) CreateOrder(ctx context.Context, req model.CreateOrderRequest) (*model.Order, error) {
+	o, err := c.inner.CreateOrder(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	c.cacheSet(context.Background(), o)
+	c.cacheSet(ctx, o)
 	return o, nil
 }
 
 // GetOrder returns from cache if present; falls through to inner store on a miss
 // and populates the cache for subsequent reads.
-func (c *RedisCache) GetOrder(id string) (*model.Order, error) {
-	ctx := context.Background()
-	if o, ok := c.cacheGet(ctx, id); ok {
+func (c *RedisCache) GetOrder(ctx context.Context, id string) (*model.Order, error) {
+	o, ok, err := c.cacheGet(ctx, id)
+	if err != nil {
+		c.log.Warn("redis cache read failed", "error", err, "order_id", id)
+	} else if ok {
 		return o, nil
 	}
-	o, err := c.inner.GetOrder(id)
+
+	o, err = c.inner.GetOrder(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -90,15 +107,15 @@ func (c *RedisCache) GetOrder(id string) (*model.Order, error) {
 }
 
 // ListOrders always reads from the inner store — listing is not cached.
-func (c *RedisCache) ListOrders() ([]*model.Order, error) {
-	return c.inner.ListOrders()
+func (c *RedisCache) ListOrders(ctx context.Context) ([]*model.Order, error) {
+	return c.inner.ListOrders(ctx)
 }
 
-func (c *RedisCache) UpdateStatus(id string, status model.OrderStatus) (*model.Order, error) {
-	o, err := c.inner.UpdateStatus(id, status)
+func (c *RedisCache) UpdateStatus(ctx context.Context, id string, status model.OrderStatus) (*model.Order, error) {
+	o, err := c.inner.UpdateStatus(ctx, id, status)
 	if err != nil {
 		return nil, err
 	}
-	c.cacheSet(context.Background(), o)
+	c.cacheSet(ctx, o)
 	return o, nil
 }

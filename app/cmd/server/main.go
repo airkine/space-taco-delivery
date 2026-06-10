@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/your-org/space-taco-delivery/internal/handler"
+	"github.com/your-org/space-taco-delivery/internal/service"
 	"github.com/your-org/space-taco-delivery/internal/store"
 )
 
@@ -22,7 +23,7 @@ func main() {
 
 	var st store.Store = memStore
 	if redisURL := os.Getenv("REDIS_URL"); redisURL != "" {
-		cache, err := store.NewRedisCache(memStore, redisURL)
+		cache, err := store.NewRedisCache(memStore, redisURL, log)
 		if err != nil {
 			log.Warn("redis cache unavailable, falling back to memory store", "error", err)
 		} else {
@@ -32,17 +33,22 @@ func main() {
 		}
 	}
 
-	h := handler.New(st, log)
+	svc := service.NewOrderService(st, log)
+	h := handler.New(svc, log)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /", h.ServeUI)
-	mux.HandleFunc("GET /healthz", h.Healthz)
-	mux.HandleFunc("GET /readyz", h.Readyz)
-	mux.HandleFunc("GET /api/v1/orders", h.ListOrders)
-	mux.HandleFunc("POST /api/v1/orders", h.CreateOrder)
-	mux.HandleFunc("GET /api/v1/orders/{id}", h.GetOrder)
-	mux.HandleFunc("PATCH /api/v1/orders/{id}/status", h.UpdateOrderStatus)
-	mux.HandleFunc("GET /api/v1/menu", h.GetMenu)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" || r.Method != http.MethodGet {
+			http.NotFound(w, r)
+			return
+		}
+		h.ServeUI(w, r)
+	})
+	mux.HandleFunc("/healthz", h.Healthz)
+	mux.HandleFunc("/readyz", h.Readyz)
+	mux.HandleFunc("/api/v1/menu", h.GetMenu)
+	mux.HandleFunc("/api/v1/orders", h.ServeOrders)
+	mux.HandleFunc("/api/v1/orders/", h.ServeOrderResource)
 
 	port := os.Getenv("PORT")
 	if port == "" {
