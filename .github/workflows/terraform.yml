@@ -43,7 +43,7 @@ jobs:
           # permissions.contents = write is set above). Fall back to GITHUB_TOKEN
           # so checkout still authenticates if TF_GITHUB_TOKEN isn't set/exposed
           # for this environment (e.g. PR builds running under "dev").
-          token: ${{ secrets.TF_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
           # Fetch full history so the flux provider can push cleanly.
           fetch-depth: 0
 
@@ -67,7 +67,7 @@ jobs:
         env:
           # The GitHub provider needs a token during init to resolve the github
           # registry mirror for the provider download.
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.TF_GITHUB_TOKEN }}
 
       - name: Terraform Validate
         run: terraform validate
