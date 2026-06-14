@@ -2,7 +2,36 @@
 
 This directory contains everything needed to spin up a full Space Taco Delivery
 environment on your local machine using [Kind](https://kind.sigs.k8s.io/)
-(Kubernetes in Docker).
+(Kubernetes in Docker), as well as guides for setting up production Azure deployment
+via GitHub Actions + Terraform.
+
+---
+
+## 🚀 GitHub Actions + Terraform (Azure Deployment)
+
+To enable `terraform apply` via GitHub Actions, you need to create an Azure service
+principal and configure OIDC federation. This is a **one-time setup** that takes ~10 minutes.
+
+### Quick Start
+
+1. **New to this?** Start with [GITHUB_SECRETS_CHECKLIST.md](GITHUB_SECRETS_CHECKLIST.md)
+   - Lists the 4 secrets you need
+   - Quick copy-paste PowerShell commands
+   - 5-minute setup
+
+2. **Want the full picture?** Read [SERVICE_PRINCIPAL_SETUP.md](SERVICE_PRINCIPAL_SETUP.md)
+   - Step-by-step walkthrough with detailed explanations
+   - Covers OIDC federation, Terraform state storage, and RBAC
+   - Includes troubleshooting and security best practices
+
+### After Setup
+
+Once secrets are added to GitHub, any push to these paths automatically triggers the workflow:
+- `gitops/terraform/**`
+- `gitops/flux/**`
+- `.github/workflows/terraform.yml`
+
+The workflow runs `terraform plan` on pull requests and `terraform apply` on merges to `main`.
 
 ---
 
@@ -10,10 +39,13 @@ environment on your local machine using [Kind](https://kind.sigs.k8s.io/)
 
 ```
 deploy/
+├── SERVICE_PRINCIPAL_SETUP.md      # 📖 Full Azure setup guide for Terraform + GitHub Actions
+├── GITHUB_SECRETS_CHECKLIST.md     # 🔑 Quick reference for GitHub secrets
+├── README.md                       # (this file)
 └── kind/
-    ├── kind-cluster.yaml       # Kind cluster topology (1 control-plane + 2 workers)
-    ├── bootstrap-local.sh      # One-shot bootstrap script for Git Bash / WSL / macOS
-    └── bootstrap-local.ps1     # One-shot bootstrap script for Windows PowerShell
+    ├── kind-cluster.yaml           # Kind cluster topology (1 control-plane + 2 workers)
+    ├── bootstrap-local.sh          # One-shot bootstrap script for Git Bash / WSL / macOS
+    └── bootstrap-local.ps1         # One-shot bootstrap script for Windows PowerShell
 ```
 
 ---

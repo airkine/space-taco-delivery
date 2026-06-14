@@ -1,0 +1,54 @@
+---
+# Kyverno HelmRepository — fetches from the official Kyverno chart repo.
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: HelmRepository
+metadata:
+  name: kyverno
+  namespace: flux-system
+spec:
+  url: https://kyverno.github.io/kyverno/
+  interval: 60m # Policy engine charts don't change often; relax polling interval.
+---
+# Kyverno HelmRelease — installs the Kyverno admission controller.
+# Must be applied (and healthy) before the space-taco HelmRelease, since
+# Kyverno's ValidatingWebhookConfiguration will reject pods that don't pass
+# the image-signature policy once it is installed.
+#
+# standalone mode (replicaCount: 1) is sufficient for a single-node dev cluster.
+# Production would use replicaCount: 3 + HA mode.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: kyverno
+  namespace: kyverno
+spec:
+  interval: 10m
+
+  chart:
+    spec:
+      chart: kyverno
+      version: "3.x"
+      sourceRef:
+        kind: HelmRepository
+        name: kyverno
+        namespace: flux-system
+
+  install:
+    createNamespace: true # Creates the kyverno namespace if it doesn't exist.
+    retries: 3
+
+  upgrade:
+    retries: 3
+    remediation:
+      remediateLastFailure: true
+
+  values:
+    # Single replica — dev cluster, no HA needed.
+    admissionController:
+      replicas: 1
+    backgroundController:
+      replicas: 1
+    cleanupController:
+      replicas: 1
+    reportsController:
+      replicas: 1

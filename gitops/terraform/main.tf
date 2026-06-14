@@ -6,10 +6,23 @@ terraform {
       source  = "integrations/github"
       version = "~> 6.0"
     }
+
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~> 4.0"
+    }
+
+    # fluxcd/flux provider bootstraps Flux into the AKS cluster and commits
+    # the GitOps manifests to the repo — replaces running `flux bootstrap` manually.
+    flux = {
+      source  = "fluxcd/flux"
+      version = "~> 1.4"
+    }
   }
 
-  # Store state remotely in Azure Blob Storage
-  # Authenticate via: az login, or set ARM_CLIENT_ID / ARM_CLIENT_SECRET / ARM_TENANT_ID / ARM_SUBSCRIPTION_ID
+  # Store state remotely in Azure Blob Storage.
+  # Authenticated via OIDC in CI (ARM_USE_OIDC=true + ARM_CLIENT_ID etc.).
+  # Locally: az login is sufficient; the azurerm backend picks up the token automatically.
   backend "azurerm" {
     resource_group_name  = "rg-terraform-state"
     storage_account_name = "terraformstate024"
@@ -21,6 +34,36 @@ terraform {
 provider "github" {
   token = var.github_token
   owner = var.github_owner
+}
+
+# features {} is required even when empty — the azurerm provider errors without it.
+provider "azurerm" {
+  features {}
+  # Auth is handled by environment variables in CI (ARM_USE_OIDC, ARM_CLIENT_ID,
+  # ARM_TENANT_ID, ARM_SUBSCRIPTION_ID) and by `az login` locally.
+  # No credentials hardcoded here — they stay in CI secrets / local az login context.
+  subscription_id = var.azure_subscription_id
+}
+
+# The flux provider talks to two surfaces: the Kubernetes API (to install Flux
+# controllers) and GitHub (to commit the bootstrap manifests).  Both are wired
+# from outputs of the AKS cluster resource so there is no manual kubeconfig step.
+provider "flux" {
+  kubernetes = {
+    host = azurerm_kubernetes_cluster.main.kube_config[0].host
+
+    # AKS returns base64-encoded certs in the kubeconfig block.
+    client_certificate     = base64decode(azurerm_kubernetes_cluster.main.kube_config[0].client_certificate)
+    client_key             = base64decode(azurerm_kubernetes_cluster.main.kube_config[0].client_key)
+    cluster_ca_certificate = base64decode(azurerm_kubernetes_cluster.main.kube_config[0].cluster_ca_certificate)
+  }
+  git = {
+    url = "https://github.com/${var.github_owner}/space-taco-delivery.git"
+    http = {
+      username = "git" # GitHub ignores the username for token auth
+      password = var.github_token
+    }
+  }
 }
 
 # ---------------------------------------------------------------------------
@@ -73,7 +116,8 @@ resource "github_branch_protection" "main" {
   enforce_admins                  = false
   require_conversation_resolution = true
   require_signed_commits          = true
-  }
+}
+
 # ---------------------------------------------------------------------------
 # Labels
 # ---------------------------------------------------------------------------
@@ -107,18 +151,6 @@ resource "github_actions_secret" "cosign_password" {
   repository      = github_repository.space_taco.name
   secret_name     = "COSIGN_PASSWORD"
   plaintext_value = var.cosign_password
-}
-
-resource "github_actions_secret" "sonar_token" {
-  repository      = github_repository.space_taco.name
-  secret_name     = "SONAR_TOKEN"
-  plaintext_value = var.sonar_token
-}
-
-resource "github_actions_secret" "sonar_host_url" {
-  repository      = github_repository.space_taco.name
-  secret_name     = "SONAR_HOST_URL"
-  plaintext_value = var.sonar_host_url
 }
 
 resource "github_actions_secret" "azure_client_id" {

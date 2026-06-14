@@ -1,0 +1,13 @@
+---
+# Namespace for the space-taco-delivery application.
+# Created here (not in the Helm chart) so Flux can manage it independently of
+# the HelmRelease lifecycle — deleting the HelmRelease won't nuke the namespace.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: space-taco
+  labels:
+    # Kyverno ClusterPolicies select namespaces by label.
+    # Adding this label opts the namespace into image-signature verification.
+    policy.sigstore.dev/include: "true"
+    app.kubernetes.io/managed-by: flux

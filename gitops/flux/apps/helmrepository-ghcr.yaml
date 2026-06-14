@@ -1,0 +1,18 @@
+---
+# HelmRepository tells Flux where to find the space-taco Helm chart.
+# The chart is published to GHCR as an OCI artifact by the chart.yml workflow.
+#
+# OCI repositories use type: oci — Flux fetches the chart via
+# `helm pull oci://ghcr.io/<owner>/space-taco-delivery/charts/space-taco`
+# rather than polling an index.yaml, so interval only controls how often
+# Flux checks for new chart versions.
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: HelmRepository
+metadata:
+  name: space-taco-ghcr
+  namespace: flux-system
+spec:
+  type: oci
+  url: oci://ghcr.io/airkine/space-taco-delivery/charts
+  # Check for new chart versions every 10 minutes.
+  interval: 10m

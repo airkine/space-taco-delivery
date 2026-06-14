@@ -5,11 +5,13 @@ on:
     branches: [main]
     paths:
       - "gitops/terraform/**"
+      - "gitops/flux/**"        # Flux manifest changes also re-run apply so bootstrap stays current
       - ".github/workflows/terraform.yml"
   pull_request:
     branches: [main]
     paths:
       - "gitops/terraform/**"
+      - "gitops/flux/**"
   workflow_dispatch:
 
 defaults:
@@ -17,9 +19,9 @@ defaults:
     working-directory: gitops/terraform
 
 permissions:
-  contents: read
-  pull-requests: write  # To comment plan output on PRs
-  id-token: write       # For OIDC AWS/cloud auth
+  contents: write       # flux_bootstrap_git pushes Flux manifests to the repo
+  pull-requests: write  # Comment plan output on PRs
+  id-token: write       # OIDC auth to Azure
 
 jobs:
   terraform:
@@ -27,19 +29,29 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ github.ref == 'refs/heads/main' && 'prod' || 'dev' }}
     env:
-      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      # azurerm provider + backend auth via OIDC — no client secret needed.
+      ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      ARM_USE_OIDC: "true"
+      ARM_USE_OIDC:        "true"
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # flux_bootstrap_git commits Flux manifests back to main.
+          # A token with contents:write is required (GITHUB_TOKEN has that when
+          # permissions.contents = write is set above). Fall back to GITHUB_TOKEN
+          # so checkout still authenticates if TF_GITHUB_TOKEN isn't set/exposed
+          # for this environment (e.g. PR builds running under "dev").
+          token: ${{ secrets.TF_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+          # Fetch full history so the flux provider can push cleanly.
+          fetch-depth: 0
 
       - name: Azure Login (OIDC)
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Set up Terraform
@@ -53,6 +65,8 @@ jobs:
       - name: Terraform Init
         run: terraform init
         env:
+          # The GitHub provider needs a token during init to resolve the github
+          # registry mirror for the provider download.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Terraform Validate
@@ -64,17 +78,17 @@ jobs:
           terraform plan -no-color -out=tfplan 2>&1 | tee plan_output.txt
           echo "exitcode=$?" >> $GITHUB_OUTPUT
         env:
-          TF_VAR_github_token: ${{ secrets.TF_GITHUB_TOKEN }}
-          TF_VAR_github_owner: ${{ github.repository_owner }}
-          TF_VAR_cosign_password: ${{ secrets.COSIGN_PASSWORD }}
-          TF_VAR_sonar_token: ${{ secrets.SONAR_TOKEN }}
-          TF_VAR_sonar_host_url: ${{ secrets.SONAR_HOST_URL }}
-          TF_VAR_azure_client_id: ${{ secrets.AZURE_CLIENT_ID }}
-          TF_VAR_azure_tenant_id: ${{ secrets.AZURE_TENANT_ID }}
+          # Non-sensitive AKS/Flux/GitHub config (location, environment, node size/count,
+          # github_owner) comes from the committed gitops/terraform/terraform.tfvars,
+          # which Terraform auto-loads. Only secrets are injected here.
+          TF_VAR_github_token:          ${{ secrets.TF_GITHUB_TOKEN }}
+          TF_VAR_cosign_password:       ${{ secrets.COSIGN_PASSWORD }}
+          TF_VAR_azure_client_id:       ${{ secrets.AZURE_CLIENT_ID }}
+          TF_VAR_azure_tenant_id:       ${{ secrets.AZURE_TENANT_ID }}
           TF_VAR_azure_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         continue-on-error: true
 
-      # Post plan output as PR comment
+      # Post plan output as a PR comment so reviewers can see exactly what will change.
       - name: Comment plan on PR
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
@@ -97,11 +111,10 @@ jobs:
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: terraform apply -auto-approve tfplan
         env:
-          TF_VAR_github_token: ${{ secrets.TF_GITHUB_TOKEN }}
-          TF_VAR_github_owner: ${{ github.repository_owner }}
-          TF_VAR_cosign_password: ${{ secrets.COSIGN_PASSWORD }}
-          TF_VAR_sonar_token: ${{ secrets.SONAR_TOKEN }}
-          TF_VAR_sonar_host_url: ${{ secrets.SONAR_HOST_URL }}
-          TF_VAR_azure_client_id: ${{ secrets.AZURE_CLIENT_ID }}
-          TF_VAR_azure_tenant_id: ${{ secrets.AZURE_TENANT_ID }}
+          # Non-sensitive AKS/Flux/GitHub config comes from the committed
+          # gitops/terraform/terraform.tfvars (auto-loaded by Terraform).
+          TF_VAR_github_token:          ${{ secrets.TF_GITHUB_TOKEN }}
+          TF_VAR_cosign_password:       ${{ secrets.COSIGN_PASSWORD }}
+          TF_VAR_azure_client_id:       ${{ secrets.AZURE_CLIENT_ID }}
+          TF_VAR_azure_tenant_id:       ${{ secrets.AZURE_TENANT_ID }}
           TF_VAR_azure_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}

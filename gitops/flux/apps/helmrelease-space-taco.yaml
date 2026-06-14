@@ -1,0 +1,82 @@
+---
+# HelmRelease tells Flux to deploy the space-taco Helm chart into the space-taco
+# namespace and keep it reconciled.  Any drift from the desired state is corrected
+# automatically on the next reconciliation interval.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: space-taco
+  namespace: space-taco
+spec:
+  # How often Flux reconciles the release even when nothing has changed.
+  interval: 10m
+
+  chart:
+    spec:
+      # Must match the chart name inside the OCI artifact (helm show chart oci://...).
+      chart: space-taco
+      # semver range: ">=0.1.0" tracks any release; pin to "0.1.x" to lock the minor.
+      version: ">=0.1.0"
+      sourceRef:
+        kind: HelmRepository
+        name: space-taco-ghcr
+        namespace: flux-system
+      # Re-resolve the chart on every reconciliation so new pushes are picked up
+      # without needing a manual flux reconcile helmrelease.
+      reconcileStrategy: ChartVersion
+
+  # Upgrade behaviour — retry up to 3 times, then wait for the next interval.
+  upgrade:
+    retries: 3
+    # Roll back to the previous release if the upgrade fails all retries.
+    remediation:
+      remediateLastFailure: true
+
+  # If the initial install fails, retry before giving up.
+  install:
+    retries: 3
+    remediation:
+      retries: 3
+
+  # ---------------------------------------------------------------------------
+  # Values — override chart defaults for the dev Azure cluster.
+  # The app uses in-memory store (no Redis) to keep costs at zero.
+  # ---------------------------------------------------------------------------
+  values:
+    # Single replica for dev — saves node resources for Flux/Kyverno overhead.
+    replicaCount: 1
+
+    image:
+      registry: ghcr.io
+      # Must match the IMAGE_NAME in build.yml: <owner>/<repo>/space-taco-delivery
+      repository: airkine/space-taco-delivery/space-taco-delivery
+      pullPolicy: IfNotPresent
+      # "latest" tracks the most recent push to main.  Pin to a semver tag
+      # (e.g. "v0.2.1") for a stable deploy that only updates on explicit change.
+      tag: "latest"
+
+    # No Redis in dev Azure — app falls back to the in-memory store gracefully.
+    # Add `REDIS_URL: "redis://redis:6379/0"` here if you add a Redis HelmRelease.
+    env:
+      PORT: "8080"
+      REDIS_URL: ""
+
+    # Keep resources tight — B2s has 2 vCPU / 4Gi shared with Flux + Kyverno.
+    resources:
+      requests:
+        cpu: 50m
+        memory: 32Mi
+      limits:
+        cpu: 200m
+        memory: 64Mi
+
+    # Expose via ClusterIP; use `kubectl port-forward` to reach the UI locally.
+    # Flip to LoadBalancer when you want a public IP (adds ~$0.004/hr to Azure bill).
+    service:
+      type: ClusterIP
+      port: 80
+      targetPort: 8080
+
+    # Anti-affinity is irrelevant on a single node — disable to avoid
+    # "preferred" scheduling noise in the events.
+    affinity: {}
