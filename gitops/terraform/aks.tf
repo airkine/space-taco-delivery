@@ -85,8 +85,8 @@ resource "azurerm_kubernetes_cluster" "main" {
 
     # These CIDRs must not overlap with each other or with any peered VNet.
     # Defaults shown explicitly here for clarity.
-    pod_cidr     = "10.244.0.0/16"
-    service_cidr = "10.0.0.0/16"
+    pod_cidr       = "10.244.0.0/16"
+    service_cidr   = "10.0.0.0/16"
     dns_service_ip = "10.0.0.10"
   }
 
