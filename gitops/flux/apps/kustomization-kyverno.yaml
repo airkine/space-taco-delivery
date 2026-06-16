@@ -47,21 +47,14 @@ spec:
 
   values:
     # Single replica — dev cluster, no HA needed.
-    # All controllers target the user node pool via nodeSelector so they share the
-    # apps pool with space-taco and stay off the system pool (AKS infrastructure).
+    # nodeSelector removed: the "apps" user node pool does not exist in the
+    # current cluster (only system pool is provisioned), so locking pods to
+    # kubernetes.azure.com/mode=user prevents scheduling entirely.
     admissionController:
       replicas: 1
-      nodeSelector:
-        kubernetes.azure.com/mode: user
     backgroundController:
       replicas: 1
-      nodeSelector:
-        kubernetes.azure.com/mode: user
     cleanupController:
       replicas: 1
-      nodeSelector:
-        kubernetes.azure.com/mode: user
     reportsController:
       replicas: 1
-      nodeSelector:
-        kubernetes.azure.com/mode: user
