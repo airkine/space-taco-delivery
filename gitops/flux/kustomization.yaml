@@ -1,0 +1,18 @@
+---
+# Root kustomize config for the path Flux watches (./gitops/flux).
+# Without this file, kustomize-controller auto-generates one by scanning
+# all subdirectories recursively — which would include apps/ as a direct
+# resource AND apply kustomization-apps.yaml, causing double-management and
+# leaking the apps Kustomization's healthChecks into the flux-system status.
+#
+# By being explicit we control exactly what the flux-system Kustomization
+# deploys:
+#   - flux-system/ installs Flux controllers and wires up the GitRepository
+#     + Kustomization that points back here.
+#   - kustomization-apps.yaml creates the "apps" child Kustomization, which
+#     separately reconciles ./gitops/flux/apps at its own interval.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - flux-system/  # Flux controllers (gotk-components) + sync config (gotk-sync)
+  - kustomization-apps.yaml  # Child Flux Kustomization that manages ./gitops/flux/apps
