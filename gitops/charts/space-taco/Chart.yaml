@@ -2,8 +2,8 @@ apiVersion: v2
 name: space-taco
 description: 🌮🚀 Intergalactic Taco Delivery Microservice
 type: application
-version: 0.1.0
-appVersion: "0.1.0"
+version: 0.1.1
+appVersion: "0.1.1"
 
 keywords:
   - taco
@@ -18,3 +18,5 @@ annotations:
   artifacthub.io/changes: |
     - kind: added
       description: Initial intergalactic launch
+    - kind: fixed
+      description: Remove hardcoded nodeSelector from chart defaults so pods schedule on any available node

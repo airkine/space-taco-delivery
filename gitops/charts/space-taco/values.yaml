@@ -85,10 +85,10 @@ autoscaling:
   maxReplicas: 10
   targetCPUUtilizationPercentage: 70
 
-# Target the user node pool. AKS automatically labels every node in a User-mode
-# pool with kubernetes.azure.com/mode: user, keeping app pods off the system pool.
-nodeSelector:
-  kubernetes.azure.com/mode: user
+# No nodeSelector by default — schedule on any available node.
+# Override per environment if a dedicated user node pool is provisioned.
+# Example: nodeSelector: {kubernetes.azure.com/mode: user}
+nodeSelector: {}
 tolerations: []
 affinity:
   podAntiAffinity:

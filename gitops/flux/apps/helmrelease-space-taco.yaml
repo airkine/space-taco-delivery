@@ -23,8 +23,8 @@ spec:
     spec:
       # Must match the chart name inside the OCI artifact (helm show chart oci://...).
       chart: space-taco
-      # semver range: ">=0.1.0" tracks any release; pin to "0.1.x" to lock the minor.
-      version: ">=0.1.0"
+      # semver range: ">=0.1.1" requires the version that removed the hardcoded nodeSelector.
+      version: ">=0.1.1"
       sourceRef:
         kind: HelmRepository
         name: space-taco-ghcr
@@ -103,8 +103,3 @@ spec:
 
     # No anti-affinity needed for a single-replica dev deploy.
     affinity: {}
-
-    # nodeSelector removed: the "apps" user node pool does not exist in the
-    # current cluster (only system pool is provisioned). Locking to
-    # kubernetes.azure.com/mode=user would prevent scheduling entirely.
-    nodeSelector: {}
