@@ -11,6 +11,14 @@ spec:
   # How often Flux reconciles the release even when nothing has changed.
   interval: 10m
 
+  # space-taco's Helm chart installs Kyverno ClusterPolicy resources.
+  # If helm-controller tries to apply them before Kyverno registers its CRDs,
+  # the install times out with ClusterPolicy status: 'NotFound'.
+  # dependsOn ensures helm-controller waits for kyverno to be fully ready first.
+  dependsOn:
+    - name: kyverno
+      namespace: kyverno
+
   chart:
     spec:
       # Must match the chart name inside the OCI artifact (helm show chart oci://...).
