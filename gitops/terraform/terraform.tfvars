@@ -16,10 +16,15 @@ github_owner = "airkine"
 location    = "eastus2"
 environment = "dev"
 
-# Cost options (single node, always-on):
+# VM SKU is shared by both the system and user node pools.
+# Cost options (per node, always-on):
 #   Standard_B2s       ~$35/month  x86  — available in all regions (default)
 #   Standard_B2pls_v2  ~$17/month  ARM  — available in eastus2, westus2, westeurope
-aks_node_vm_size = "Standard_B2pls_v2"
-aks_node_count   = 1
+# With two pools at 1 node each:
+#   Standard_B2pls_v2 → ~$34/month total node cost
+#   Standard_B2s      → ~$70/month total node cost
+aks_node_vm_size    = "Standard_B2pls_v2"
+aks_node_count      = 1 # system pool — AKS infrastructure (CoreDNS, konnectivity, etc.)
+aks_user_node_count = 1 # user/apps pool — Flux, Kyverno, space-taco
 
 kubernetes_version = null

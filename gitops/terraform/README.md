@@ -4,6 +4,21 @@ This Terraform configuration manages two things:
 1. **GitHub resources** — repo settings, branch protection, labels, secrets, environments
 2. **Azure infrastructure** — AKS cluster (free tier, single node) + Flux bootstrap
 
+## File layout
+
+| File | Purpose |
+|------|---------|
+| `versions.tf` | `terraform {}` block — `required_version`, `required_providers`, `backend "azurerm"` |
+| `provider.tf` | `provider "..."` configuration blocks |
+| `variables.tf` | All input variable declarations |
+| `locals.tf` | Shared `common_tags` local |
+| `main.tf` | GitHub resources (repo, branch protection, labels, secrets, environments) |
+| `aks.tf` | Azure resources (resource group, AKS cluster, public IP, DNS role assignment) |
+| `flux.tf` | Flux bootstrap via `flux_bootstrap_git` |
+| `outputs.tf` | All output values |
+| `terraform.tfvars` | Non-sensitive defaults committed to source control |
+| `.terraform.lock.hcl` | Provider checksum lock — **committed**, ensures reproducible provider downloads |
+
 ## What it builds
 
 ### GitHub resources
@@ -13,7 +28,7 @@ This Terraform configuration manages two things:
 | `github_repository` | `space-taco-delivery`, squash-merge only, auto branch deletion |
 | `github_branch_protection` | Protects `main`: requires `Lint & Test` + `Build & Publish`, 1 review, signed commits |
 | `github_issue_label` | 10 labels across `area/`, `type/`, `priority/` prefixes |
-| `github_actions_secret` | `COSIGN_PASSWORD`, Azure OIDC secrets |
+| `github_actions_secret` | `COSIGN_PASSWORD`, Azure OIDC secrets — uses current `value` field (deprecated `plaintext_value` removed in github provider v6) |
 | `github_repository_environment` | `dev` (unprotected) and `prod` (requires reviewer, protected branches only) |
 
 ### Azure infrastructure
@@ -21,7 +36,8 @@ This Terraform configuration manages two things:
 | Resource | Details |
 |----------|---------|
 | `azurerm_resource_group` | `rg-space-taco-<env>` in `var.location` |
-| `azurerm_kubernetes_cluster` | `aks-space-taco-<env>` — Free tier control plane, single `Standard_B2s` node, kubenet, workload identity + OIDC issuer enabled |
+| `azurerm_kubernetes_cluster` | `aks-space-taco-<env>` — Free tier control plane, kubenet, workload identity + OIDC issuer enabled |
+| `azurerm_kubernetes_cluster_node_pool` | `apps` user pool (1 node) — hosts Flux, Kyverno, and the space-taco application; separated from the system pool so AKS infrastructure and app workloads never compete |
 | `flux_bootstrap_git` | Installs Flux v2 controllers into the cluster and commits bootstrap manifests to `gitops/flux/flux-system/` |
 
 ### Flux app manifests (`gitops/flux/apps/`)
@@ -36,25 +52,35 @@ Managed as YAML; Flux reconciles them after bootstrap:
 | `helmrelease-space-taco.yaml` | HelmRelease for the app — latest chart from GHCR, single replica, no Redis |
 | `kustomization.yaml` | Flux Kustomization wiring everything together, Kyverno health-checked before space-taco |
 
+## Node pool architecture
+
+Two node pools keep AKS infrastructure and application workloads on separate nodes:
+
+| Pool | Name | Mode | Nodes | Workloads |
+|------|------|------|-------|-----------|
+| System | `system` | `System` | 1 | CoreDNS, konnectivity-agent, azure-cni (AKS-managed) |
+| User | `apps` | `User` | 1 | Flux controllers, Kyverno, space-taco |
+
+AKS automatically labels every user-pool node with `kubernetes.azure.com/mode: user`. All application deployments carry `nodeSelector: kubernetes.azure.com/mode: user` to target this pool explicitly.
+
 ## Cost estimate (dev cluster, always-on)
 
 | Component | Monthly cost |
 |-----------|-------------|
 | AKS control plane (Free tier) | $0 |
-| 1× `Standard_B2s` node (2 vCPU / 4 GiB) | ~$35 |
-| OS disk (30 GB managed) | ~$2 |
+| 1× system node `Standard_B2pls_v2` (ARM64, 2 vCPU / 4 GiB) | ~$17 |
+| 1× user node `Standard_B2pls_v2` (ARM64, 2 vCPU / 4 GiB) | ~$17 |
+| OS disks (2× 30 GB managed) | ~$4 |
 | Standard Load Balancer (egress) | ~$18 |
 | Terraform state storage (existing) | ~$1 |
-| **Total** | **~$56/month** |
+| **Total** | **~$57/month** |
 
-### Cheaper: `Standard_B2pls_v2` (ARM64, ~$17/month node)
+### Swap to x86 if ARM is unavailable
 
-Set in `terraform.tfvars` — the app image is multi-arch so ARM is fine:
 ```hcl
-location         = "eastus2"   # B2pls_v2 available in eastus2, westus2, westeurope
-aks_node_vm_size = "Standard_B2pls_v2"
+# terraform.tfvars
+aks_node_vm_size = "Standard_B2s"   # ~$35/month per node → ~$88/month total
 ```
-Effective total: ~$38/month.
 
 ### Cut costs further: stop the cluster when not in use
 
@@ -72,10 +98,11 @@ Running ~4 hrs/day on weekdays drops effective node cost from ~$35 to ~$5/month.
 
 ## Prerequisites
 
-- [Terraform](https://developer.hashicorp.com/terraform/install) >= 1.7
+- [Terraform](https://developer.hashicorp.com/terraform/install) `~> 1.7` (pinned in `versions.tf`; `>= 1.7` was intentionally narrowed to exclude potential breaking changes in 2.x)
 - [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) — for local auth (`az login`)
 - GitHub PAT with `repo` + `workflow` scopes — see [Secrets](#secrets-and-variables)
 - The `rg-terraform-state` resource group and `terraformstate024` storage account must already exist (one-time setup, not managed here)
+- **`.terraform.lock.hcl` is committed** — run `terraform init` to use the pinned provider checksums; do not delete or `.gitignore` it
 
 ## Secrets and variables
 

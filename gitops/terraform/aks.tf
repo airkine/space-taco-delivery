@@ -1,10 +1,18 @@
+# moved block — renames the resource address from .main → .this without
+# destroying and recreating the cluster. "this" is the correct convention
+# for a genuine singleton resource (one cluster per stack).
+moved {
+  from = azurerm_kubernetes_cluster.main
+  to   = azurerm_kubernetes_cluster.this
+}
+
 resource "azurerm_resource_group" "aks" {
   name     = "rg-space-taco-${var.environment}"
   location = var.location
   tags     = local.common_tags
 }
 
-resource "azurerm_kubernetes_cluster" "main" {
+resource "azurerm_kubernetes_cluster" "this" {
   name                = "aks-space-taco-${var.environment}"
   location            = azurerm_resource_group.aks.location
   resource_group_name = azurerm_resource_group.aks.name
@@ -16,6 +24,9 @@ resource "azurerm_kubernetes_cluster" "main" {
   automatic_upgrade_channel = "patch"
   kubernetes_version        = var.kubernetes_version
 
+  # ---------------------------------------------------------------------------
+  # System node pool — AKS infrastructure only (CoreDNS, konnectivity, etc.)
+  # ---------------------------------------------------------------------------
   default_node_pool {
     name            = "system"
     node_count      = var.aks_node_count
@@ -63,6 +74,37 @@ resource "azurerm_kubernetes_cluster" "main" {
   }
 }
 
+# ---------------------------------------------------------------------------
+# User node pool — application workloads (Flux, Kyverno, space-taco)
+# ---------------------------------------------------------------------------
+# Separated from the system pool so AKS infrastructure components and app
+# workloads never compete for the same node budget.
+# AKS labels every node in this pool with:
+#   kubernetes.azure.com/mode: user
+# Deployments use nodeSelector on that label to target this pool explicitly.
+resource "azurerm_kubernetes_cluster_node_pool" "apps" {
+  name                  = "apps"
+  kubernetes_cluster_id = azurerm_kubernetes_cluster.this.id
+  vm_size               = var.aks_node_vm_size
+  node_count            = var.aks_user_node_count
+  mode                  = "User"
+
+  os_disk_size_gb = 30
+  # Ephemeral disk requires VM cache ≥ OS disk size; B-series cache = 0, so use Managed.
+  os_disk_type         = "Managed"
+  auto_scaling_enabled = false
+
+  upgrade_settings {
+    max_surge = "1"
+  }
+
+  tags = local.common_tags
+}
+
+# ---------------------------------------------------------------------------
+# Supporting data sources and networking
+# ---------------------------------------------------------------------------
+
 # rg-management is provisioned outside this stack and pre-dates this Terraform config.
 data "azurerm_resource_group" "management" {
   name = var.management_resource_group_name
@@ -86,5 +128,5 @@ resource "azurerm_public_ip" "ingress" {
 resource "azurerm_role_assignment" "external_dns_contributor" {
   scope                = data.azurerm_resource_group.management.id
   role_definition_name = "DNS Zone Contributor"
-  principal_id         = azurerm_kubernetes_cluster.main.kubelet_identity[0].object_id
+  principal_id         = azurerm_kubernetes_cluster.this.kubelet_identity[0].object_id
 }

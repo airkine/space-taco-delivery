@@ -19,7 +19,7 @@ output "repo_full_name" {
 
 output "aks_cluster_name" {
   description = "AKS cluster name — use with: az aks get-credentials --name <value> --resource-group <aks_resource_group_name>"
-  value       = azurerm_kubernetes_cluster.main.name
+  value       = azurerm_kubernetes_cluster.this.name
 }
 
 output "aks_resource_group_name" {
@@ -29,25 +29,26 @@ output "aks_resource_group_name" {
 
 output "aks_oidc_issuer_url" {
   description = "OIDC issuer URL for the AKS cluster — needed when creating federated credentials for workload identity"
-  value       = azurerm_kubernetes_cluster.main.oidc_issuer_url
+  value       = azurerm_kubernetes_cluster.this.oidc_issuer_url
 }
 
 output "aks_kubelet_identity_object_id" {
   description = "Object ID of the kubelet managed identity — currently assigned DNS Zone Contributor on rg-management for external-dns"
-  value       = azurerm_kubernetes_cluster.main.kubelet_identity[0].object_id
+  value       = azurerm_kubernetes_cluster.this.kubelet_identity[0].object_id
 }
 
-# The raw kubeconfig gives cluster-admin access.  Mark sensitive so Terraform
+# The raw kubeconfig gives cluster-admin access. Mark sensitive so Terraform
 # never prints it in plan/apply output or CI logs.
 output "kube_config" {
   description = "Raw kubeconfig for the AKS cluster (cluster-admin). Retrieve with: terraform output -raw kube_config"
-  value       = azurerm_kubernetes_cluster.main.kube_config_raw
+  value       = azurerm_kubernetes_cluster.this.kube_config_raw
   sensitive   = true
 }
 
 output "app_url" {
   description = "Public URL of the space-taco app (live once Flux has reconciled the Ingress)"
-  value       = "http://taco-delivery.${var.dns_zone_name}"
+  # https — web_app_routing with a DNS zone implies TLS termination at the ingress controller.
+  value = "https://taco-delivery.${var.dns_zone_name}"
 }
 
 output "ingress_public_ip" {

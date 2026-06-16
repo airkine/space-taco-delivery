@@ -90,6 +90,11 @@ spec:
               pathType: Prefix
       tls: []
 
-    # Anti-affinity is irrelevant on a single node — disable to avoid
+    # Anti-affinity is irrelevant on a single user-pool node — disable to avoid
     # "preferred" scheduling noise in the events.
     affinity: {}
+
+    # Route all app pods to the user node pool. AKS labels every User-mode pool
+    # node with kubernetes.azure.com/mode: user, keeping them off the system pool.
+    nodeSelector:
+      kubernetes.azure.com/mode: user

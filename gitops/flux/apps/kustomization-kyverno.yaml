@@ -44,11 +44,21 @@ spec:
 
   values:
     # Single replica — dev cluster, no HA needed.
+    # All controllers target the user node pool via nodeSelector so they share the
+    # apps pool with space-taco and stay off the system pool (AKS infrastructure).
     admissionController:
       replicas: 1
+      nodeSelector:
+        kubernetes.azure.com/mode: user
     backgroundController:
       replicas: 1
+      nodeSelector:
+        kubernetes.azure.com/mode: user
     cleanupController:
       replicas: 1
+      nodeSelector:
+        kubernetes.azure.com/mode: user
     reportsController:
       replicas: 1
+      nodeSelector:
+        kubernetes.azure.com/mode: user
