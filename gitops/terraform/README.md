@@ -212,6 +212,26 @@ curl http://taco-delivery.autoaaron.xyz/healthz
 
 ## Destroying the cluster
 
+### Via GitHub Actions (recommended)
+
+Use the **Terraform Destroy** workflow (`.github/workflows/terraform-destroy.yml`) for a fully audited teardown:
+
+1. Navigate to **Actions → Terraform Destroy → Run workflow**
+2. Leave the branch set to `main`
+3. Type `destroy` in the confirmation field (exact, case-sensitive)
+4. Click **Run workflow**
+
+The workflow runs two steps:
+- **Terraform Plan Destroy** — logs every resource that will be removed (permanent audit trail in the run log)
+- **Terraform Destroy** — applies the saved plan
+
+Safety gates that abort before touching any infrastructure:
+- Branch must be `main` (feature branches are rejected)
+- Confirmation input must equal `destroy` exactly
+
+### Locally
+
 ```bash
+cd gitops/terraform
 terraform destroy
 ```
