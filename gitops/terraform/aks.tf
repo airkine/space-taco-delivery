@@ -117,6 +117,17 @@ resource "azurerm_kubernetes_cluster" "main" {
   # (~$10-30/month depending on ingestion).  Skipping for dev.
   monitor_metrics {}
 
+  # ---------------------------------------------------------------------------
+  # Web App Routing — Azure-managed NGINX ingress controller.
+  # Provisions an Azure Public IP and installs the ingress controller into the
+  # app-routing-system namespace.  Wired to the autoaaron.xyz DNS zone so the
+  # controller creates an A record for each Ingress host automatically.
+  # Cost: ~$0.004/hr for the public IP (~$3/month).
+  # ---------------------------------------------------------------------------
+  web_app_routing {
+    dns_zone_ids = [data.azurerm_dns_zone.main.id]
+  }
+
   tags = {
     environment = var.environment
     project     = "space-taco-delivery"
@@ -129,6 +140,25 @@ resource "azurerm_kubernetes_cluster" "main" {
     # automatic patch upgrades don't cause Terraform to show a perpetual diff.
     ignore_changes = [kubernetes_version]
   }
+}
+
+# ---------------------------------------------------------------------------
+# DNS zone — looked up by name/RG so the resource ID is derived rather than
+# hardcoded, which keeps the subscription ID out of source.
+# ---------------------------------------------------------------------------
+data "azurerm_dns_zone" "main" {
+  name                = "autoaaron.xyz"
+  resource_group_name = "rg-management"
+}
+
+# ---------------------------------------------------------------------------
+# Grant the Web App Routing managed identity permission to write DNS records.
+# Without this the controller can't create the A record for the Ingress host.
+# ---------------------------------------------------------------------------
+resource "azurerm_role_assignment" "web_app_routing_dns" {
+  scope                = data.azurerm_dns_zone.main.id
+  role_definition_name = "DNS Zone Contributor"
+  principal_id         = azurerm_kubernetes_cluster.main.web_app_routing[0].web_app_routing_identity[0].object_id
 }
 
 # ---------------------------------------------------------------------------

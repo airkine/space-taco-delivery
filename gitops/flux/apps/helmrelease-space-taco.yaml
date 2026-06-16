@@ -70,12 +70,25 @@ spec:
         cpu: 200m
         memory: 64Mi
 
-    # Expose via ClusterIP; use `kubectl port-forward` to reach the UI locally.
-    # Flip to LoadBalancer when you want a public IP (adds ~$0.004/hr to Azure bill).
     service:
       type: ClusterIP
       port: 80
       targetPort: 8080
+
+    # Public ingress via AKS Web App Routing (managed NGINX).
+    # The controller automatically creates an A record in autoaaron.xyz pointing
+    # at the provisioned public IP, so the app is reachable at the host below
+    # within ~60 seconds of the Ingress being admitted.
+    ingress:
+      enabled: true
+      className: "webapprouting.kubernetes.azure.com"
+      annotations: {}
+      hosts:
+        - host: "taco-delivery.autoaaron.xyz"
+          paths:
+            - path: /
+              pathType: Prefix
+      tls: []
 
     # Anti-affinity is irrelevant on a single node — disable to avoid
     # "preferred" scheduling noise in the events.

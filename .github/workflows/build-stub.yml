@@ -1,0 +1,31 @@
+name: Build, Sign & Push Image (stub)
+
+# "Lint & Test" and "Build & Publish" (defined in build.yml) are required status
+# checks on main, but build.yml only triggers for PRs that touch app/**. PRs that
+# don't touch app/** would otherwise leave those required checks stuck in
+# "Expected — Waiting for status to be reported" forever, blocking the merge.
+#
+# This workflow provides stub jobs with the same names that report success
+# immediately for PRs that don't touch app/**, so the required checks are
+# satisfied without running the real build/test pipeline.
+
+on:
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - "app/**"
+      - ".github/workflows/build.yml"
+
+jobs:
+  test:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No app/** changes in this PR — skipping Lint & Test."
+
+  build:
+    name: Build & Publish
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No app/** changes in this PR — skipping Build & Publish."

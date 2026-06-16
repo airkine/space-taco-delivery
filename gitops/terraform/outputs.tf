@@ -44,3 +44,8 @@ output "kube_config" {
   value       = azurerm_kubernetes_cluster.main.kube_config_raw
   sensitive   = true
 }
+
+output "app_url" {
+  description = "Public URL of the space-taco app once Flux has deployed the Ingress and Web App Routing has created the DNS A record (~60s after apply)"
+  value       = "http://taco-delivery.autoaaron.xyz"
+}
