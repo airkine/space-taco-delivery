@@ -18,6 +18,11 @@ terraform {
       source  = "fluxcd/flux"
       version = "~> 1.4"
     }
+
+    kubernetes = {
+      source  = "hashicorp/kubernetes"
+      version = "~> 2.0"
+    }
   }
 
   # Store state remotely in Azure Blob Storage.
@@ -43,6 +48,13 @@ provider "azurerm" {
   # ARM_TENANT_ID, ARM_SUBSCRIPTION_ID) and by `az login` locally.
   # No credentials hardcoded here — they stay in CI secrets / local az login context.
   subscription_id = var.azure_subscription_id
+}
+
+provider "kubernetes" {
+  host                   = azurerm_kubernetes_cluster.main.kube_config[0].host
+  client_certificate     = base64decode(azurerm_kubernetes_cluster.main.kube_config[0].client_certificate)
+  client_key             = base64decode(azurerm_kubernetes_cluster.main.kube_config[0].client_key)
+  cluster_ca_certificate = base64decode(azurerm_kubernetes_cluster.main.kube_config[0].cluster_ca_certificate)
 }
 
 # The flux provider talks to two surfaces: the Kubernetes API (to install Flux

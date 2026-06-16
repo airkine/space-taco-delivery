@@ -46,6 +46,11 @@ output "kube_config" {
 }
 
 output "app_url" {
-  description = "Public URL of the space-taco app once Flux has deployed the Ingress and Web App Routing has created the DNS A record (~60s after apply)"
+  description = "Public URL of the space-taco app (live once Flux has reconciled the Ingress)"
   value       = "http://taco-delivery.autoaaron.xyz"
+}
+
+output "ingress_public_ip" {
+  description = "Static public IP assigned to the Web App Routing ingress controller"
+  value       = azurerm_public_ip.ingress.ip_address
 }
