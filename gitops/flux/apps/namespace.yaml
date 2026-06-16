@@ -1,4 +1,15 @@
 ---
+# Kyverno namespace — must exist before the HelmRelease object is applied.
+# helm.install.createNamespace=true only tells helm-controller to create it
+# during chart install; kustomize-controller needs it to exist to place the
+# HelmRelease resource in that namespace.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kyverno
+  labels:
+    app.kubernetes.io/managed-by: flux
+---
 # Namespace for the space-taco-delivery application.
 # Created here (not in the Helm chart) so Flux can manage it independently of
 # the HelmRelease lifecycle — deleting the HelmRelease won't nuke the namespace.
