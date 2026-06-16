@@ -6,7 +6,7 @@
 # `helm pull oci://ghcr.io/<owner>/space-taco-delivery/charts/space-taco`
 # rather than polling an index.yaml, so interval only controls how often
 # Flux checks for new chart versions.
-apiVersion: source.toolkit.fluxcd.io/v1beta2
+apiVersion: source.toolkit.fluxcd.io/v1
 kind: HelmRepository
 metadata:
   name: space-taco-ghcr
