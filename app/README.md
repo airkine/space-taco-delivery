@@ -15,7 +15,7 @@ app/
 │   ├── handler/ui.html         # Single-page UI (space theme, vanilla JS)
 │   ├── model/order.go          # Domain types: Order, TacoItem, MenuItem, request/response structs
 │   └── store/memory.go         # In-memory store (thread-safe, seeded with sample orders)
-├── Dockerfile                  # Multi-stage build → distroless final image
+├── Dockerfile                  # Multi-stage build → distroless final image (linux/amd64 + linux/arm64 via TARGETARCH ARG)
 └── go.mod
 ```
 

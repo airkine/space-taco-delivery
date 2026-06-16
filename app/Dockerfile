@@ -16,8 +16,12 @@ RUN go mod download
 
 COPY . .
 
-# Build a statically linked binary
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+# TARGETARCH is injected by docker buildx for each platform in the matrix
+# (amd64, arm64, etc.). Without this, GOARCH defaults to the builder's native
+# arch and the cross-compiled binary fails at runtime with "exec format error".
+ARG TARGETARCH
+# Build a statically linked binary for the target platform
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build \
     -ldflags="-w -s -X main.version=${VERSION:-dev} -X main.commit=${COMMIT:-unknown}" \
     -trimpath \
     -o space-taco-delivery \
