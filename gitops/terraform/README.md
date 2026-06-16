@@ -36,8 +36,9 @@ This Terraform configuration manages two things:
 | Resource | Details |
 |----------|---------|
 | `azurerm_resource_group` | `rg-space-taco-<env>` in `var.location` |
-| `azurerm_kubernetes_cluster` | `aks-space-taco-<env>` — Free tier control plane, kubenet, workload identity + OIDC issuer enabled |
+| `azurerm_kubernetes_cluster` | `aks-space-taco-<env>` — Free tier control plane, kubenet, workload identity + OIDC issuer enabled, Web App Routing addon with `autoaaron.xyz` DNS zone wired |
 | `azurerm_kubernetes_cluster_node_pool` | `apps` user pool (1 node) — hosts Flux, Kyverno, and the space-taco application; separated from the system pool so AKS infrastructure and app workloads never compete |
+| `azurerm_role_assignment.external_dns_contributor` | Grants **DNS Zone Contributor** on `rg-management` to the **web app routing managed identity** (`web_app_routing[0].web_app_routing_identity[0].object_id`) — this is the MSI that the AKS-managed `external-dns` pod authenticates with; it is distinct from `kubelet_identity` |
 | `flux_bootstrap_git` | Installs Flux v2 controllers into the cluster and commits bootstrap manifests to `gitops/flux/flux-system/` |
 
 ### Flux app manifests (`gitops/flux/apps/`)
@@ -48,8 +49,8 @@ Managed as YAML; Flux reconciles them after bootstrap:
 |----------|---------|
 | `namespace.yaml` | `space-taco` namespace with Kyverno label |
 | `helmrepository-ghcr.yaml` | OCI HelmRepository pointing at GHCR |
-| `kustomization-kyverno.yaml` | Kyverno HelmRepository + HelmRelease (admission controller) |
-| `helmrelease-space-taco.yaml` | HelmRelease for the app — latest chart from GHCR, single replica, no Redis |
+| `kustomization-kyverno.yaml` | Kyverno HelmRepository + HelmRelease (admission controller). `retries` is nested under `remediation:` — placing it directly under `install:` or `upgrade:` is a Flux v2 schema validation error that blocks the entire `apps` kustomization. |
+| `helmrelease-space-taco.yaml` | HelmRelease for the app — latest chart from GHCR, single replica, no Redis. Same `retries`-under-`remediation` convention applies. |
 | `kustomization.yaml` | Flux Kustomization wiring everything together, Kyverno health-checked before space-taco |
 
 ## Node pool architecture

@@ -35,11 +35,14 @@ spec:
 
   install:
     createNamespace: true # Creates the kyverno namespace if it doesn't exist.
-    retries: 3
+    remediation:
+      # retries goes under remediation in Flux v2 HelmRelease schema;
+      # placing it directly under install/upgrade is a schema validation error.
+      retries: 3
 
   upgrade:
-    retries: 3
     remediation:
+      retries: 3
       remediateLastFailure: true
 
   values:

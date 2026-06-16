@@ -26,15 +26,16 @@ spec:
       reconcileStrategy: ChartVersion
 
   # Upgrade behaviour — retry up to 3 times, then wait for the next interval.
+  # retries lives under remediation in the Flux v2 HelmRelease schema; it is
+  # invalid (schema validation error) at the top level of install/upgrade.
   upgrade:
-    retries: 3
     # Roll back to the previous release if the upgrade fails all retries.
     remediation:
+      retries: 3
       remediateLastFailure: true
 
   # If the initial install fails, retry before giving up.
   install:
-    retries: 3
     remediation:
       retries: 3
 

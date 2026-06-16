@@ -124,9 +124,13 @@ resource "azurerm_public_ip" "ingress" {
   tags                = local.common_tags
 }
 
-# App Routing's external-dns needs DNS Zone Contributor to upsert A records in rg-management.
+# App Routing's external-dns pod runs as the web_app_routing managed identity, NOT the
+# kubelet identity.  Granting DNS Zone Contributor to the wrong principal was the root
+# cause of the CrashLoopBackOff on external-dns (403 on dnsZones/read in rg-management).
 resource "azurerm_role_assignment" "external_dns_contributor" {
   scope                = data.azurerm_resource_group.management.id
   role_definition_name = "DNS Zone Contributor"
-  principal_id         = azurerm_kubernetes_cluster.this.kubelet_identity[0].object_id
+  # web_app_routing_identity is the MSI that external-dns authenticates with;
+  # it is distinct from kubelet_identity and created automatically by AKS.
+  principal_id = azurerm_kubernetes_cluster.this.web_app_routing[0].web_app_routing_identity[0].object_id
 }

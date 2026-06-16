@@ -33,8 +33,13 @@ output "aks_oidc_issuer_url" {
 }
 
 output "aks_kubelet_identity_object_id" {
-  description = "Object ID of the kubelet managed identity — currently assigned DNS Zone Contributor on rg-management for external-dns"
+  description = "Object ID of the kubelet managed identity (used for ACR pull, node MSI — NOT external-dns)"
   value       = azurerm_kubernetes_cluster.this.kubelet_identity[0].object_id
+}
+
+output "aks_web_app_routing_identity_object_id" {
+  description = "Object ID of the web app routing managed identity — holds DNS Zone Contributor on rg-management so external-dns can upsert A records"
+  value       = azurerm_kubernetes_cluster.this.web_app_routing[0].web_app_routing_identity[0].object_id
 }
 
 # The raw kubeconfig gives cluster-admin access. Mark sensitive so Terraform
