@@ -94,14 +94,35 @@ jobs:
 
       # Generate an SBOM for the Helm chart package (.tgz) using Syft.
       # This gives consumers a verifiable bill of materials for the chart itself.
+      #
+      # NOTE: anchore/sbom-action@v0 passes the 'path' parameter to syft with a
+      # 'dir:' scheme prefix (e.g. 'syft scan dir:/tmp/charts/space-taco-0.1.1.tgz'),
+      # which fails because a .tgz archive is not a directory.  The action only
+      # supports directories and OCI images via 'path:'.  We install syft directly
+      # and invoke it without the 'dir:' scheme — syft auto-detects .tgz archives
+      # and walks their contents correctly.
       - name: Generate chart SBOM
-        uses: anchore/sbom-action@v0
+        run: |
+          # Install the latest stable Syft release into /usr/local/bin.
+          # Using the official installer script so the version stays up to date
+          # without manual maintenance of a pinned version string in this file.
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
+            | sh -s -- -b /usr/local/bin
+
+          # Scan the packaged .tgz — syft detects the archive format automatically
+          # when no scheme prefix is specified, enumerating every file inside it.
+          syft scan "${{ steps.package.outputs.chart_pkg }}" \
+            -o spdx-json \
+            --file chart-sbom.spdx.json
+
+      # Upload the generated SBOM as a workflow artifact so it can be downloaded
+      # and inspected, and so 'Attest chart SBOM' can reference it.
+      - name: Upload chart SBOM artifact
+        uses: actions/upload-artifact@v4
         with:
-          path: ${{ steps.package.outputs.chart_pkg }}
-          format: spdx-json
-          output-file: chart-sbom.spdx.json
-          upload-artifact: true
-          upload-artifact-retention: 30
+          name: chart-sbom
+          path: chart-sbom.spdx.json
+          retention-days: 30
 
       # Attest the SBOM against the chart's immutable digest so it is verifiable
       # via `cosign verify-attestation` and recorded in Rekor.
