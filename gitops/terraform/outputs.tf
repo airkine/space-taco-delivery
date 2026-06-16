@@ -33,7 +33,7 @@ output "aks_oidc_issuer_url" {
 }
 
 output "aks_kubelet_identity_object_id" {
-  description = "Object ID of the kubelet managed identity — used for role assignments (e.g. AcrPull if you ever move from GHCR to ACR)"
+  description = "Object ID of the kubelet managed identity — currently assigned DNS Zone Contributor on rg-management for external-dns"
   value       = azurerm_kubernetes_cluster.main.kubelet_identity[0].object_id
 }
 
@@ -47,7 +47,7 @@ output "kube_config" {
 
 output "app_url" {
   description = "Public URL of the space-taco app (live once Flux has reconciled the Ingress)"
-  value       = "http://taco-delivery.autoaaron.xyz"
+  value       = "http://taco-delivery.${var.dns_zone_name}"
 }
 
 output "ingress_public_ip" {

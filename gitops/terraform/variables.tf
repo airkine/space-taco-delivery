@@ -67,7 +67,7 @@ variable "aks_node_vm_size" {
     Swap this value in terraform.tfvars; no other change needed.
   EOT
   type        = string
-  default     = "Standard_B2s" # x86 default for broadest region availability
+  default     = "Standard_B4pls_v2" # x86 default for broadest region availability
 }
 
 variable "aks_node_count" {
@@ -90,4 +90,16 @@ variable "kubernetes_version" {
   EOT
   type        = string
   default     = null
+}
+
+variable "management_resource_group_name" {
+  description = "Resource group containing shared resources (DNS zones) provisioned outside this stack."
+  type        = string
+  default     = "rg-management"
+}
+
+variable "dns_zone_name" {
+  description = "Azure DNS zone used for ingress hostnames."
+  type        = string
+  default     = "autoaaron.xyz"
 }

@@ -10,7 +10,6 @@ gitops/terraform/*.tfstate.backup
 gitops/terraform/*.tfplan
 gitops/terraform/tfplan
 gitops/terraform/plan_output.txt
-gitops/terraform/.terraform.lock.hcl
 
 # SBOM artifacts
 *.spdx.json

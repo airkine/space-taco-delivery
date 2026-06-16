@@ -13,7 +13,7 @@ github_owner = "airkine"
 # ---------------------------------------------------------------------------
 # AKS
 # ---------------------------------------------------------------------------
-location    = "eastus2" # Change to westus2 / westeurope for B2pls_v2 availability
+location    = "eastus2"
 environment = "dev"
 
 # Cost options (single node, always-on):
