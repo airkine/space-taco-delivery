@@ -51,7 +51,9 @@ spec:
       registry: ghcr.io
       # Must match the IMAGE_NAME in build.yml: <owner>/<repo>/space-taco-delivery
       repository: airkine/space-taco-delivery/space-taco-delivery
-      pullPolicy: IfNotPresent
+      # Always pull so that a new "latest" image pushed by CI is picked up
+      # immediately on the next pod restart/upgrade without needing to change the tag.
+      pullPolicy: Always
       # "latest" tracks the most recent push to main.  Pin to a semver tag
       # (e.g. "v0.2.1") for a stable deploy that only updates on explicit change.
       tag: "latest"
