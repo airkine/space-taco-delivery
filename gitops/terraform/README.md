@@ -147,6 +147,18 @@ terraform apply
 
 AKS/Flux/GitHub config (`location`, `environment`, `aks_node_vm_size`, `aks_node_count`, `github_owner`, `kubernetes_version`) comes from the committed `terraform.tfvars` — edit that file to change them.
 
+#### Workflow trigger matrix
+
+| Trigger | Branch | Plan | Apply |
+|---------|--------|------|-------|
+| `push` | `main` | ✓ | ✓ |
+| `pull_request` | any → `main` | ✓ (comment on PR) | ✗ |
+| `workflow_dispatch` | `main` (apply input = true) | ✓ | ✓ |
+| `workflow_dispatch` | `main` (apply input = false) | ✓ | ✗ |
+| `workflow_dispatch` | non-main | ✓ | ✗ always — branch guard |
+
+**Manual dispatch** is useful to force-apply after an out-of-band change (e.g. a role assignment applied via `az rest`), or to verify drift without committing anything. Navigate to **Actions → Terraform → Run workflow**, select the branch, and uncheck `apply` if you only want a plan.
+
 Secrets are stored as GitHub Actions **Secrets** and injected as `TF_VAR_*`:
 
 | GitHub Secret | Purpose |

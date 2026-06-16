@@ -13,6 +13,17 @@ on:
       - "gitops/terraform/**"
       - "gitops/flux/**"
   workflow_dispatch:
+    inputs:
+      # Allow a manual run to skip apply (plan-only) if the caller just wants to
+      # verify drift without making changes.  Defaults to true so the most common
+      # use case — "apply the current state NOW" — requires no extra clicks.
+      # Note: apply is still gated on github.ref == 'refs/heads/main'; dispatching
+      # from a feature branch will always be plan-only regardless of this input.
+      apply:
+        description: "Run terraform apply after plan (main branch only)"
+        type: boolean
+        required: false
+        default: true
 
 defaults:
   run:
@@ -108,7 +119,17 @@ jobs:
             });
 
       - name: Terraform Apply
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        # Apply on:
+        #   - push to main (the normal GitOps flow), OR
+        #   - workflow_dispatch from main with the 'apply' input checked (default: true).
+        # PR builds and dispatches from non-main branches are always plan-only.
+        # fromJSON() is required because boolean workflow_dispatch inputs arrive
+        # as the strings 'true'/'false', not native booleans.
+        if: |
+          github.ref == 'refs/heads/main' && (
+            github.event_name == 'push' ||
+            (github.event_name == 'workflow_dispatch' && fromJSON(inputs.apply))
+          )
         run: terraform apply -auto-approve tfplan
         env:
           # Non-sensitive AKS/Flux/GitHub config comes from the committed
