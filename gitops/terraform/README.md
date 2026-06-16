@@ -182,7 +182,21 @@ kubectl get pods -n space-taco
 # Access the UI
 kubectl port-forward -n space-taco svc/space-taco 8080:80
 # → http://localhost:8080
+
+# Access the public URL (once DNS propagates, ~60s after Ingress is admitted)
+curl http://taco-delivery.autoaaron.xyz/healthz
 ```
+
+## Troubleshooting — AKS-specific
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `external-dns` pod CrashLoopBackOff with 403 Forbidden | `azurerm_role_assignment.external_dns_contributor` was targeting `kubelet_identity` instead of `web_app_routing_identity` | Fixed: principal_id now uses `web_app_routing[0].web_app_routing_identity[0].object_id`. Apply the role immediately with `az rest --method PUT` if Terraform can't run. |
+| Flux kustomization stuck: `.spec.install.retries field not declared in schema` | Flux v2 requires `retries` under `.spec.install.remediation.retries`, not directly under `.spec.install` | Fixed: moved `retries` under `remediation` in `kustomization-kyverno.yaml` and `helmrelease-space-taco.yaml`. |
+| `HelmRepository` not found (v1beta2) | Flux v2.4.0 removed `source.toolkit.fluxcd.io/v1beta2`; all HelmRepository resources must use `v1` | Fixed: updated `apiVersion` in both `helmrepository-ghcr.yaml` and `kustomization-kyverno.yaml`. |
+| Kyverno HelmRelease: `ClusterPolicy NotFound` | Space-taco HelmRelease was applying simultaneously with Kyverno, before its CRDs were registered | Fixed: added `dependsOn: kyverno` to `helmrelease-space-taco.yaml`. |
+| `exec format error` in space-taco pod | `GOARCH=amd64` was hardcoded in the Dockerfile, producing an amd64 binary even in the arm64 image layer | Fixed: switched to `ARG TARGETARCH` so each platform in the multi-arch build compiles the correct binary. |
+| Kyverno pods `Pending` with node affinity error | Chart default `nodeSelector: {kubernetes.azure.com/mode: user}` matched nothing when the user node pool isn't provisioned | Fixed: changed chart default to `nodeSelector: {}`. Override per environment if a user pool exists. |
 
 ## Destroying the cluster
 
