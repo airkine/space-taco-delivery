@@ -50,7 +50,8 @@ permissions:
 jobs:
   # ---------------------------------------------------------------------------
   # GitHub resources — repo, branch protection, secrets, labels, environments.
-  # Deliberately has NO Azure login step; this state never touches Azure.
+  # Has no azurerm provider resources, but still needs Azure Login because the
+  # state backend itself (backend "azurerm") lives in Azure Blob Storage.
   # ---------------------------------------------------------------------------
   terraform-github:
     name: Terraform Plan / Apply (github)
@@ -59,11 +60,28 @@ jobs:
     defaults:
       run:
         working-directory: gitops/terraform/github
+    env:
+      # This module has no azurerm *provider* resources, but its state still
+      # lives in Azure Blob Storage (backend "azurerm" in versions.tf), which
+      # needs ARM auth to read/write — hence OIDC login is required here too.
+      ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      ARM_USE_OIDC:        "true"
     steps:
       - uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
+
+      - name: Azure Login (OIDC)
+        # Not used by any provider in this module — only so the azurerm
+        # backend can authenticate to read/write this module's state blob.
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
