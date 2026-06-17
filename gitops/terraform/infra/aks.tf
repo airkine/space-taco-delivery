@@ -1,11 +1,3 @@
-# moved block — renames the resource address from .main → .this without
-# destroying and recreating the cluster. "this" is the correct convention
-# for a genuine singleton resource (one cluster per stack).
-moved {
-  from = azurerm_kubernetes_cluster.main
-  to   = azurerm_kubernetes_cluster.this
-}
-
 resource "azurerm_resource_group" "aks" {
   name     = "rg-space-taco-${var.environment}"
   location = var.location

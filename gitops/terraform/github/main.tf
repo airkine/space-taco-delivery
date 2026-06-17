@@ -64,12 +64,6 @@ resource "github_issue_label" "labels" {
 # `value` is the current field (replaces deprecated `plaintext_value`).
 # The provider encrypts it using the repository's GitHub public key before
 # sending to the API — the plaintext never leaves Terraform's process unencrypted.
-resource "github_actions_secret" "cosign_password" {
-  repository  = github_repository.space_taco.name
-  secret_name = "COSIGN_PASSWORD"
-  value       = var.cosign_password
-}
-
 resource "github_actions_secret" "azure_client_id" {
   repository  = github_repository.space_taco.name
   secret_name = "AZURE_CLIENT_ID"

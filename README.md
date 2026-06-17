@@ -53,10 +53,18 @@ A fully production-patterned microservice demonstrating GitOps best practices:
 │   └── go.mod
 │
 ├── gitops/                     # GitOps root
-│   ├── terraform/              # GitHub repo IaC
-│   │   ├── main.tf             # Repo, branch protection, labels
-│   │   ├── variables.tf
-│   │   └── outputs.tf
+│   ├── terraform/
+│   │   ├── github/             # GitHub repo IaC — repo, branch protection, labels, secrets
+│   │   │   ├── main.tf
+│   │   │   ├── variables.tf
+│   │   │   └── outputs.tf
+│   │   └── infra/               # Azure IaC — AKS cluster + Flux bootstrap
+│   │       ├── aks.tf
+│   │       ├── flux.tf
+│   │       ├── variables.tf
+│   │       └── outputs.tf
+│   │       # github/ and infra/ are separate Terraform states on purpose —
+│   │       # see gitops/terraform/README.md "Why two states"
 │   └── charts/
 │       └── space-taco/         # Helm chart
 │           ├── Chart.yaml
@@ -75,7 +83,8 @@ A fully production-patterned microservice demonstrating GitOps best practices:
 └── .github/workflows/
     ├── build.yml               # Build → sign → SBOM → push image
     ├── chart.yml               # Package → sign → push Helm chart
-    └── terraform.yml           # Plan on PR, apply on merge
+    ├── terraform.yml           # Plan on PR, apply on merge (github/ then infra/)
+    └── terraform-destroy.yml   # Manual-only teardown, scoped to infra/ only
 ```
 
 ## Local Development
@@ -155,9 +164,19 @@ curl -X PATCH http://localhost:8080/api/v1/orders/TACO-000001/status \
 
 ## GitHub Repo Bootstrap (Terraform)
 
+`gitops/terraform/github/` and `gitops/terraform/infra/` are independent
+Terraform root modules with independent state — apply `github/` first so the
+repo exists before `infra/`'s Flux bootstrap tries to push to it. See
+[`gitops/terraform/README.md`](gitops/terraform/README.md) for the full
+picture, including why they're split.
+
 ```bash
-cd gitops/terraform
-cp terraform.tfvars.example terraform.tfvars  # fill in your values
+cd gitops/terraform/github
+terraform init
+terraform plan
+terraform apply
+
+cd ../infra
 terraform init
 terraform plan
 terraform apply
@@ -168,7 +187,9 @@ Required secrets to add after repo creation:
 | Secret | Description |
 | --- | --- |
 | `TF_GITHUB_TOKEN` | GitHub PAT with `repo` + `admin:org` scopes |
-| `COSIGN_PASSWORD` | Cosign key password (optional for keyless) |
+| `AZURE_CLIENT_ID` / `AZURE_TENANT_ID` / `AZURE_SUBSCRIPTION_ID` | Azure OIDC auth for the `infra` module and CI |
+
+Image/chart signing is keyless (Sigstore Fulcio + Rekor via OIDC) — no signing-key secret is needed.
 
 ## Supply Chain Security
 

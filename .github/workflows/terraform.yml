@@ -1,5 +1,22 @@
 name: Terraform
 
+# This workflow manages TWO independent Terraform states, each in its own
+# job with its own working-directory:
+#   - terraform-github : gitops/terraform/github  (repo, branch protection,
+#                         secrets, labels, environments)
+#   - terraform-infra  : gitops/terraform/infra   (AKS cluster, Flux bootstrap)
+#
+# They are split into separate state files (separate "backend" key per
+# versions.tf in each directory) so that the Terraform Destroy workflow,
+# which only ever runs against gitops/terraform/infra, has no way to reach
+# or delete the GitHub repository itself. See gitops/terraform/README.md
+# "Why two states" for the incident that prompted this split.
+#
+# terraform-infra depends on terraform-github (needs:) purely for ordering —
+# on a from-scratch apply we want the repo to exist before flux_bootstrap_git
+# tries to push manifests to it. There is no actual Terraform resource
+# dependency between the two states.
+
 on:
   push:
     branches: [main]
@@ -25,20 +42,130 @@ on:
         required: false
         default: true
 
-defaults:
-  run:
-    working-directory: gitops/terraform
-
 permissions:
   contents: write       # flux_bootstrap_git pushes Flux manifests to the repo
   pull-requests: write  # Comment plan output on PRs
   id-token: write       # OIDC auth to Azure
 
 jobs:
-  terraform:
-    name: Terraform Plan / Apply
+  # ---------------------------------------------------------------------------
+  # GitHub resources — repo, branch protection, secrets, labels, environments.
+  # Has no azurerm provider resources, but still needs Azure Login because the
+  # state backend itself (backend "azurerm") lives in Azure Blob Storage.
+  # ---------------------------------------------------------------------------
+  terraform-github:
+    name: Terraform Plan / Apply (github)
     runs-on: ubuntu-latest
     environment: ${{ github.ref == 'refs/heads/main' && 'prod' || 'dev' }}
+    defaults:
+      run:
+        working-directory: gitops/terraform/github
+    env:
+      # This module has no azurerm *provider* resources, but its state still
+      # lives in Azure Blob Storage (backend "azurerm" in versions.tf), which
+      # needs ARM auth to read/write — hence OIDC login is required here too.
+      ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      ARM_USE_OIDC:        "true"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Azure Login (OIDC)
+        # Not used by any provider in this module — only so the azurerm
+        # backend can authenticate to read/write this module's state blob.
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.7"
+
+      - name: Terraform fmt check
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Init
+        run: terraform init
+        env:
+          # The GitHub provider needs a token during init to resolve the github
+          # registry mirror for the provider download.
+          GITHUB_TOKEN: ${{ secrets.TF_GITHUB_TOKEN }}
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        id: plan
+        run: |
+          terraform plan -no-color -out=tfplan 2>&1 | tee plan_output.txt
+          echo "exitcode=$?" >> $GITHUB_OUTPUT
+        env:
+          # github_owner (non-sensitive) comes from the committed
+          # gitops/terraform/github/terraform.tfvars, auto-loaded by Terraform.
+          # Only secrets are injected here.
+          TF_VAR_github_token:          ${{ secrets.TF_GITHUB_TOKEN }}
+          TF_VAR_azure_client_id:       ${{ secrets.AZURE_CLIENT_ID }}
+          TF_VAR_azure_tenant_id:       ${{ secrets.AZURE_TENANT_ID }}
+          TF_VAR_azure_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        continue-on-error: true
+
+      # Post plan output as a PR comment so reviewers can see exactly what will change.
+      - name: Comment plan on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('gitops/terraform/github/plan_output.txt', 'utf8');
+            const maxLen = 65000;
+            const truncated = plan.length > maxLen
+              ? plan.slice(0, maxLen) + '\n...[truncated]'
+              : plan;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## 🌮 Terraform Plan — github\n\`\`\`hcl\n${truncated}\n\`\`\``
+            });
+
+      - name: Terraform Apply
+        # Apply on:
+        #   - push to main (the normal GitOps flow), OR
+        #   - workflow_dispatch from main with the 'apply' input checked (default: true).
+        # PR builds and dispatches from non-main branches are always plan-only.
+        # fromJSON() is required because boolean workflow_dispatch inputs arrive
+        # as the strings 'true'/'false', not native booleans.
+        if: |
+          github.ref == 'refs/heads/main' && (
+            github.event_name == 'push' ||
+            (github.event_name == 'workflow_dispatch' && fromJSON(inputs.apply))
+          )
+        run: terraform apply -auto-approve tfplan
+        env:
+          TF_VAR_github_token:          ${{ secrets.TF_GITHUB_TOKEN }}
+          TF_VAR_azure_client_id:       ${{ secrets.AZURE_CLIENT_ID }}
+          TF_VAR_azure_tenant_id:       ${{ secrets.AZURE_TENANT_ID }}
+          TF_VAR_azure_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+  # ---------------------------------------------------------------------------
+  # Azure infrastructure — AKS cluster + Flux bootstrap.
+  # Runs after terraform-github so a from-scratch apply has a repo to push to.
+  # ---------------------------------------------------------------------------
+  terraform-infra:
+    name: Terraform Plan / Apply (infra)
+    needs: terraform-github
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref == 'refs/heads/main' && 'prod' || 'dev' }}
+    defaults:
+      run:
+        working-directory: gitops/terraform/infra
     env:
       # azurerm provider + backend auth via OIDC — no client secret needed.
       ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
@@ -76,8 +203,9 @@ jobs:
       - name: Terraform Init
         run: terraform init
         env:
-          # The GitHub provider needs a token during init to resolve the github
-          # registry mirror for the provider download.
+          # The GitHub provider mirror is still resolved during init even
+          # though this module has no github_* resources (flux provider uses
+          # plain HTTP git auth, not the github provider).
           GITHUB_TOKEN: ${{ secrets.TF_GITHUB_TOKEN }}
 
       - name: Terraform Validate
@@ -89,13 +217,10 @@ jobs:
           terraform plan -no-color -out=tfplan 2>&1 | tee plan_output.txt
           echo "exitcode=$?" >> $GITHUB_OUTPUT
         env:
-          # Non-sensitive AKS/Flux/GitHub config (location, environment, node size/count,
-          # github_owner) comes from the committed gitops/terraform/terraform.tfvars,
+          # Non-sensitive AKS/Flux config (location, environment, node size/count)
+          # comes from the committed gitops/terraform/infra/terraform.tfvars,
           # which Terraform auto-loads. Only secrets are injected here.
           TF_VAR_github_token:          ${{ secrets.TF_GITHUB_TOKEN }}
-          TF_VAR_cosign_password:       ${{ secrets.COSIGN_PASSWORD }}
-          TF_VAR_azure_client_id:       ${{ secrets.AZURE_CLIENT_ID }}
-          TF_VAR_azure_tenant_id:       ${{ secrets.AZURE_TENANT_ID }}
           TF_VAR_azure_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         continue-on-error: true
 
@@ -106,7 +231,7 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            const plan = fs.readFileSync('gitops/terraform/plan_output.txt', 'utf8');
+            const plan = fs.readFileSync('gitops/terraform/infra/plan_output.txt', 'utf8');
             const maxLen = 65000;
             const truncated = plan.length > maxLen
               ? plan.slice(0, maxLen) + '\n...[truncated]'
@@ -115,7 +240,7 @@ jobs:
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `## 🌮 Terraform Plan\n\`\`\`hcl\n${truncated}\n\`\`\``
+              body: `## 🌮 Terraform Plan — infra\n\`\`\`hcl\n${truncated}\n\`\`\``
             });
 
       - name: Terraform Apply
@@ -132,10 +257,5 @@ jobs:
           )
         run: terraform apply -auto-approve tfplan
         env:
-          # Non-sensitive AKS/Flux/GitHub config comes from the committed
-          # gitops/terraform/terraform.tfvars (auto-loaded by Terraform).
           TF_VAR_github_token:          ${{ secrets.TF_GITHUB_TOKEN }}
-          TF_VAR_cosign_password:       ${{ secrets.COSIGN_PASSWORD }}
-          TF_VAR_azure_client_id:       ${{ secrets.AZURE_CLIENT_ID }}
-          TF_VAR_azure_tenant_id:       ${{ secrets.AZURE_TENANT_ID }}
           TF_VAR_azure_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
