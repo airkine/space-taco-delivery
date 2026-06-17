@@ -3,11 +3,10 @@
 #
 # github_token is NOT set here (it's sensitive). Supply it via the
 # TF_VAR_github_token environment variable — CI reads it from the
-# TF_GITHUB_TOKEN secret; for local runs, export it yourself.
+# TF_GITHUB_TOKEN secret; for local runs, export it yourself. It is only used
+# here for git push auth by the flux provider (no github_* resources live in
+# this module).
 
-# ---------------------------------------------------------------------------
-# GitHub
-# ---------------------------------------------------------------------------
 github_owner = "airkine"
 
 # ---------------------------------------------------------------------------

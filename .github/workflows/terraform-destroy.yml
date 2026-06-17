@@ -1,8 +1,20 @@
 name: Terraform Destroy
 
-# This workflow tears down ALL Terraform-managed resources (AKS cluster, DNS role
-# assignments, GitHub repo settings, Flux bootstrap).  It is intentionally manual-
-# only — there is no push or pull_request trigger.
+# This workflow tears down ONLY the Azure/Flux infrastructure state in
+# gitops/terraform/infra (AKS cluster, node pools, public IP, DNS role
+# assignment, Flux bootstrap). It is intentionally manual-only — there is no
+# push or pull_request trigger.
+#
+# IMPORTANT — scope: this workflow's working-directory is pinned to
+# gitops/terraform/infra, which has its OWN Terraform state/backend key,
+# entirely separate from gitops/terraform/github (repo, branch protection,
+# secrets, labels, environments). That separation is deliberate: an earlier
+# version of this workflow ran against the combined state and a destroy run
+# deleted the GitHub repository itself along with the cluster. Terraform has
+# no concept of "destroy everything except X" within a single state, so the
+# only reliable guardrail is putting the repo in a state this workflow can
+# never open. Do not repoint `working-directory` at gitops/terraform or at
+# gitops/terraform/github.
 #
 # Safety gates:
 #   1. Must be dispatched from the main branch (feature branches are rejected).
@@ -16,13 +28,13 @@ on:
       # Require an explicit acknowledgement string so accidental clicks on
       # "Run workflow" do not silently tear down the cluster.
       confirm:
-        description: "Type 'destroy' to confirm permanent deletion of ALL managed resources"
+        description: "Type 'destroy' to confirm permanent deletion of the AKS/Flux infra (gitops/terraform/infra) — this does NOT touch the GitHub repo"
         type: string
         required: true
 
 defaults:
   run:
-    working-directory: gitops/terraform
+    working-directory: gitops/terraform/infra
 
 permissions:
   # contents:write — flux_bootstrap_git may have written manifests to main;
@@ -33,7 +45,7 @@ permissions:
 
 jobs:
   destroy:
-    name: Terraform Destroy
+    name: Terraform Destroy (infra only)
     runs-on: ubuntu-latest
     # Mirror the environment gate used by terraform.yml so the same required
     # reviewers and secrets apply: prod for main, dev for any other branch
@@ -74,7 +86,7 @@ jobs:
           exit 1
 
       # -----------------------------------------------------------------------
-      # Setup — identical to terraform.yml
+      # Setup — identical to terraform.yml's terraform-infra job
       # -----------------------------------------------------------------------
       - uses: actions/checkout@v4
         with:
@@ -98,13 +110,16 @@ jobs:
       - name: Terraform Init
         run: terraform init
         env:
-          # The GitHub provider resolves its registry mirror during init.
+          # The GitHub provider mirror is resolved during init.
           GITHUB_TOKEN: ${{ secrets.TF_GITHUB_TOKEN }}
 
       # -----------------------------------------------------------------------
       # Plan destroy — runs first to produce a permanent log of what will be
       # removed.  The plan is saved to tfplan so the apply step uses the exact
-      # same changeset (no drift between plan and apply).
+      # same changeset (no drift between plan and apply). Because this job's
+      # working-directory is gitops/terraform/infra, the plan can only ever
+      # contain AKS/Flux resources — there is no github_repository resource in
+      # this state for it to reach.
       # -----------------------------------------------------------------------
       - name: Terraform Plan Destroy
         id: plan
@@ -116,12 +131,9 @@ jobs:
           terraform plan -destroy -no-color -out=tfplan 2>&1 | tee plan_output.txt
         env:
           # Non-sensitive config (location, environment, vm size, etc.) is
-          # auto-loaded from the committed gitops/terraform/terraform.tfvars.
+          # auto-loaded from the committed gitops/terraform/infra/terraform.tfvars.
           # Only secrets are injected here.
           TF_VAR_github_token:          ${{ secrets.TF_GITHUB_TOKEN }}
-          TF_VAR_cosign_password:       ${{ secrets.COSIGN_PASSWORD }}
-          TF_VAR_azure_client_id:       ${{ secrets.AZURE_CLIENT_ID }}
-          TF_VAR_azure_tenant_id:       ${{ secrets.AZURE_TENANT_ID }}
           TF_VAR_azure_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       # -----------------------------------------------------------------------
@@ -137,9 +149,6 @@ jobs:
           terraform apply -auto-approve tfplan
         env:
           TF_VAR_github_token:          ${{ secrets.TF_GITHUB_TOKEN }}
-          TF_VAR_cosign_password:       ${{ secrets.COSIGN_PASSWORD }}
-          TF_VAR_azure_client_id:       ${{ secrets.AZURE_CLIENT_ID }}
-          TF_VAR_azure_tenant_id:       ${{ secrets.AZURE_TENANT_ID }}
           TF_VAR_azure_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       # -----------------------------------------------------------------------
@@ -150,6 +159,8 @@ jobs:
         if: always()
         run: |
           echo "## Terraform Destroy — Job Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Scope: \`gitops/terraform/infra\` only — the GitHub repository (\`gitops/terraform/github\`) is a separate state and was NOT touched." >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY

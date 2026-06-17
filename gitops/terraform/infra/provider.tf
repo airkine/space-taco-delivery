@@ -1,11 +1,6 @@
 # provider.tf — Provider configuration blocks only.
 # Version constraints and the backend live in versions.tf.
 
-provider "github" {
-  token = var.github_token
-  owner = var.github_owner
-}
-
 provider "azurerm" {
   # features {} is required by the provider even when no feature flags are set.
   features {}
@@ -23,6 +18,9 @@ provider "flux" {
   }
 
   git = {
+    # The repo itself is managed in the separate github/ state — this module
+    # only needs the plain clone URL + a token with push access, not the
+    # github_repository resource.
     url = "https://github.com/${var.github_owner}/space-taco-delivery.git"
     http = {
       username = "git"

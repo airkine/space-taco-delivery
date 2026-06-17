@@ -1,55 +1,23 @@
 # ---------------------------------------------------------------------------
-# GitHub
+# Credentials needed by this module even though the *resources* they
+# authenticate live in the github/ module.
 # ---------------------------------------------------------------------------
 
 variable "github_token" {
-  description = "GitHub personal access token with repo and admin:org scopes"
+  description = "GitHub personal access token — used only for git push auth by the flux provider (no github_* resources live in this module)"
   type        = string
-  # nullable = false prevents a caller from explicitly passing null to bypass
-  # the "no default" requirement.
-  nullable  = false
-  sensitive = true
+  nullable    = false
+  sensitive   = true
 }
 
 variable "github_owner" {
-  description = "GitHub organization or user that owns the repository"
+  description = "GitHub organization or user that owns the repository — used to build the flux bootstrap git URL"
   type        = string
   nullable    = false
 }
 
-variable "cosign_password" {
-  description = "Password for the Cosign signing key (if using keyed signing)"
-  type        = string
-  # Block ordering: description → type → default → sensitive
-  default   = ""
-  sensitive = true
-}
-
-variable "azure_client_id" {
-  description = "Azure App Registration client ID used for OIDC authentication in GitHub Actions"
-  type        = string
-  default     = ""
-
-  # Prevent silent misconfiguration: if a value is supplied it must look like a UUID.
-  validation {
-    condition     = var.azure_client_id == "" || can(regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", var.azure_client_id))
-    error_message = "azure_client_id must be a valid UUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) or an empty string."
-  }
-}
-
-variable "azure_tenant_id" {
-  description = "Azure tenant ID"
-  type        = string
-  default     = ""
-
-  validation {
-    condition     = var.azure_tenant_id == "" || can(regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", var.azure_tenant_id))
-    error_message = "azure_tenant_id must be a valid UUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) or an empty string."
-  }
-}
-
 variable "azure_subscription_id" {
-  description = "Azure subscription ID"
+  description = "Azure subscription ID — used by the azurerm provider"
   type        = string
   default     = ""
 

@@ -3,13 +3,13 @@ app/bin/
 app/coverage.out
 app/*.test
 
-# Terraform
-gitops/terraform/.terraform/
-gitops/terraform/*.tfstate
-gitops/terraform/*.tfstate.backup
-gitops/terraform/*.tfplan
-gitops/terraform/tfplan
-gitops/terraform/plan_output.txt
+# Terraform (gitops/terraform/github/ and gitops/terraform/infra/)
+gitops/terraform/**/.terraform/
+gitops/terraform/**/*.tfstate
+gitops/terraform/**/*.tfstate.backup
+gitops/terraform/**/*.tfplan
+gitops/terraform/**/tfplan
+gitops/terraform/**/plan_output.txt
 
 # SBOM artifacts
 *.spdx.json
