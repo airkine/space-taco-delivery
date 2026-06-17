@@ -187,8 +187,9 @@ Required secrets to add after repo creation:
 | Secret | Description |
 | --- | --- |
 | `TF_GITHUB_TOKEN` | GitHub PAT with `repo` + `admin:org` scopes |
-| `COSIGN_PASSWORD` | Cosign key password (optional for keyless) |
 | `AZURE_CLIENT_ID` / `AZURE_TENANT_ID` / `AZURE_SUBSCRIPTION_ID` | Azure OIDC auth for the `infra` module and CI |
+
+Image/chart signing is keyless (Sigstore Fulcio + Rekor via OIDC) — no signing-key secret is needed.
 
 ## Supply Chain Security
 

@@ -23,14 +23,6 @@ variable "github_owner" {
 # secret *resources* themselves are GitHub objects managed by this module.
 # ---------------------------------------------------------------------------
 
-variable "cosign_password" {
-  description = "Password for the Cosign signing key (if using keyed signing)"
-  type        = string
-  # Block ordering: description → type → default → sensitive
-  default   = ""
-  sensitive = true
-}
-
 variable "azure_client_id" {
   description = "Azure App Registration client ID used for OIDC authentication in GitHub Actions"
   type        = string

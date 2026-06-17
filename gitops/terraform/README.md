@@ -52,7 +52,7 @@ Both `github/` and `infra/` follow the same file layout:
 | `github_repository` | `space-taco-delivery`, squash-merge only, auto branch deletion |
 | `github_branch_protection` | Protects `main`: requires `Lint & Test` + `Build & Publish`, 1 review, signed commits |
 | `github_issue_label` | 10 labels across `area/`, `type/`, `priority/` prefixes |
-| `github_actions_secret` | `COSIGN_PASSWORD`, Azure OIDC secrets — uses current `value` field (deprecated `plaintext_value` removed in github provider v6) |
+| `github_actions_secret` | Azure OIDC secrets — uses current `value` field (deprecated `plaintext_value` removed in github provider v6) |
 | `github_repository_environment` | `dev` (unprotected) and `prod` (requires reviewer, protected branches only) |
 
 `github_token` here also needs `repo` + `admin:org` scopes (repo administration, secrets, branch protection).
@@ -152,7 +152,6 @@ config — Terraform auto-loads it for both local runs and CI.
 | Variable | Module(s) | Description | Sensitive |
 |----------|-----------|--------------|-----------|
 | `github_token` | both | GitHub PAT — needs `repo`, `workflow`, `admin:org` scopes (also used by the `flux` provider in `infra/` to push bootstrap manifests) | Yes |
-| `cosign_password` | `github` | Cosign key password — leave empty for keyless signing | Yes |
 | `azure_client_id` | `github` | Azure App Registration client ID for OIDC auth (stored as a repo secret, not used by the `github` provider itself) | Yes |
 | `azure_tenant_id` | `github` | Azure tenant ID (stored as a repo secret) | Yes |
 | `azure_subscription_id` | both | Azure subscription ID — used by the `azurerm` provider in `infra/`, and stored as a repo secret by `github/` | Yes |
@@ -201,7 +200,6 @@ Secrets are stored as GitHub Actions **Secrets** and injected as `TF_VAR_*`:
 | GitHub Secret | Used by | Purpose |
 |--------------|---------|---------|
 | `TF_GITHUB_TOKEN` | both jobs | PAT used by Terraform's GitHub + flux providers — needs `repo` + `workflow` + `admin:org` scopes |
-| `COSIGN_PASSWORD` | `terraform-github` | Cosign signing key password |
 | `AZURE_CLIENT_ID` | both jobs | App Registration client ID for OIDC auth (`infra` uses it to log in to Azure; `github` writes it as a repo secret) |
 | `AZURE_TENANT_ID` | both jobs | Azure tenant ID |
 | `AZURE_SUBSCRIPTION_ID` | both jobs | Azure subscription ID |
