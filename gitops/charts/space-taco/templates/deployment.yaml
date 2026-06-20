@@ -1,76 +1,15 @@
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: {{ include "space-taco.fullname" . }}
-  labels:
-    {{- include "space-taco.labels" . | nindent 4 }}
-spec:
-  {{- if not .Values.autoscaling.enabled }}
-  replicas: {{ .Values.replicaCount }}
-  {{- end }}
-  selector:
-    matchLabels:
-      {{- include "space-taco.selectorLabels" . | nindent 6 }}
-  template:
-    metadata:
-      annotations:
-        {{- with .Values.podAnnotations }}
-        {{- toYaml . | nindent 8 }}
-        {{- end }}
-      labels:
-        {{- include "space-taco.labels" . | nindent 8 }}
-        {{- with .Values.podLabels }}
-        {{- toYaml . | nindent 8 }}
-        {{- end }}
-    spec:
-      {{- with .Values.imagePullSecrets }}
-      imagePullSecrets:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      serviceAccountName: {{ include "space-taco.serviceAccountName" . }}
-      securityContext:
-        {{- toYaml .Values.podSecurityContext | nindent 8 }}
-      containers:
-        - name: {{ .Chart.Name }}
-          securityContext:
-            {{- toYaml .Values.securityContext | nindent 12 }}
-          {{- $repo := .Values.image.repository }}
-          {{- $tag  := .Values.image.tag | default .Chart.AppVersion }}
-          {{- $image := ternary (printf "%s/%s:%s" .Values.image.registry $repo $tag) (printf "%s:%s" $repo $tag) (ne .Values.image.registry "") }}
-          image: {{ $image | quote }}
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
-          ports:
-            - name: http
-              containerPort: {{ .Values.env.PORT | default 8080 }}
-              protocol: TCP
-          env:
-            - name: PORT
-              value: {{ .Values.env.PORT | quote }}
-            {{- if .Values.env.REDIS_URL }}
-            - name: REDIS_URL
-              value: {{ .Values.env.REDIS_URL | quote }}
-            {{- end }}
-          livenessProbe:
-            {{- toYaml .Values.livenessProbe | nindent 12 }}
-          readinessProbe:
-            {{- toYaml .Values.readinessProbe | nindent 12 }}
-          resources:
-            {{- toYaml .Values.resources | nindent 12 }}
-          volumeMounts:
-            - name: tmp
-              mountPath: /tmp
-      volumes:
-        - name: tmp
-          emptyDir: {}
-      {{- with .Values.nodeSelector }}
-      nodeSelector:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- with .Values.affinity }}
-      affinity:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- with .Values.tolerations }}
-      tolerations:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
+{{- if .Values.blueGreen.enabled }}
+{{/*
+Blue/green mode: render one Deployment per slot. Both slots run at full
+replica count at all times — the idle slot is a hot standby, not scaled to
+zero — so a cutover via blueGreen.activeSlot is instant with no cold start.
+Traffic split between them is enforced by the Istio VirtualService/
+DestinationRule (see istio-virtualservice.yaml / istio-destinationrule.yaml),
+not by this template.
+*/}}
+{{- include "space-taco.deployment" (dict "root" $ "slotName" "blue" "slotConfig" .Values.blueGreen.slots.blue) }}
+---
+{{- include "space-taco.deployment" (dict "root" $ "slotName" "green" "slotConfig" .Values.blueGreen.slots.green) }}
+{{- else }}
+{{- include "space-taco.deployment" (dict "root" $ "slotName" "" "slotConfig" dict) }}
+{{- end }}

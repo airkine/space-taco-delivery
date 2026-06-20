@@ -146,6 +146,12 @@ Invoke-Exe kubectl label namespace $Namespace `
     'pod-security.kubernetes.io/warn=restricted' `
     --overwrite
 
+# istio-injection=enabled tells istiod's mutating webhook to add the
+# istio-proxy sidecar to every pod created in this namespace from now on.
+Invoke-Exe kubectl label namespace $Namespace `
+    'istio-injection=enabled' `
+    --overwrite
+
 # ---------------------------------------------------------------------------
 # Kyverno
 # ---------------------------------------------------------------------------
@@ -158,25 +164,47 @@ Invoke-Exe helm upgrade --install kyverno kyverno/kyverno `
     --wait --timeout 5m
 
 # ---------------------------------------------------------------------------
-# NGINX Ingress Controller
+# Istio service mesh
 # ---------------------------------------------------------------------------
-# Deployed via Helm with NodePort 30080/30443 so traffic from localhost:8080
-# and localhost:8443 reaches nginx via Kind's extraPortMappings.
-# The controller is pinned to the control-plane node (ingress-ready=true label)
-# with a toleration for the control-plane taint.
-Write-Info "Installing NGINX ingress controller..."
-Invoke-Exe helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx --force-update
-Invoke-Exe helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx `
-    --namespace ingress-nginx `
+# Replaces the NGINX ingress controller. Installed in dependency order:
+#   base    -> CRDs (Gateway, VirtualService, DestinationRule, ...)
+#   istiod  -> control plane (sidecar injection webhook, config distribution).
+#              cni.enabled=true here is required, not just installing the cni
+#              chart below: without it istiod's injection webhook doesn't
+#              know a CNI plugin exists and still injects the legacy
+#              privileged istio-init container, which the space-taco
+#              namespace's "restricted" Pod Security Standard rejects
+#              (NET_ADMIN/NET_RAW, runAsUser=0) — verified by hitting that
+#              exact PodSecurity violation during local testing.
+#   cni     -> per-node DaemonSet that does the iptables redirect setup for
+#              injected sidecars instead. Once istiod knows about it, the
+#              istio-proxy sidecar itself needs no elevated capabilities, so
+#              it also passes Kyverno's space-taco-pod-security ClusterPolicy
+#              unmodified.
+#   gateway -> the actual ingress gateway Service/Deployment, exposed via
+#              NodePort 30080/30443 (see istio-values/gateway-values.yaml) so
+#              http://localhost:8080 keeps working exactly like it did with
+#              NGINX.
+Write-Info "Installing Istio..."
+Invoke-Exe helm repo add istio https://istio-release.storage.googleapis.com/charts --force-update
+
+Invoke-Exe helm upgrade --install istio-base istio/base `
+    --namespace istio-system `
     --create-namespace `
-    '--set' 'controller.service.type=NodePort' `
-    '--set' 'controller.service.nodePorts.http=30080' `
-    '--set' 'controller.service.nodePorts.https=30443' `
-    '--set-string' 'controller.nodeSelector.ingress-ready=true' `
-    '--set' 'controller.tolerations[0].key=node-role.kubernetes.io/control-plane' `
-    '--set' 'controller.tolerations[0].operator=Equal' `
-    '--set' 'controller.tolerations[0].effect=NoSchedule' `
-    '--set' 'controller.admissionWebhooks.enabled=false' `
+    --wait --timeout 5m
+
+Invoke-Exe helm upgrade --install istiod istio/istiod `
+    --namespace istio-system `
+    '--set' 'cni.enabled=true' `
+    --wait --timeout 5m
+
+Invoke-Exe helm upgrade --install istio-cni istio/cni `
+    --namespace istio-system `
+    --wait --timeout 5m
+
+Invoke-Exe helm upgrade --install istio-ingressgateway istio/gateway `
+    --namespace istio-system `
+    -f deploy/kind/istio-values/gateway-values.yaml `
     --wait --timeout 5m
 
 # ---------------------------------------------------------------------------
@@ -201,20 +229,31 @@ if ($LASTEXITCODE -ne 0) {
 # Deploy Space Taco via Helm
 # ---------------------------------------------------------------------------
 Write-Info "Deploying Space Taco via Helm..."
-# ingress.enabled=true creates an Ingress for nginx pointing at localhost.
-# Traffic flow: browser -> localhost:8080 -> Kind NodePort 30080 -> nginx -> svc.
+# ingress.enabled stays false -- the plain k8s Ingress bypasses Istio's
+# routing entirely (kube-proxy resolves it before Envoy is involved), so it
+# can't enforce a blue/green split. istio.enabled=true renders a Gateway +
+# VirtualService + DestinationRule instead; traffic flow is now:
+#   browser -> localhost:8080 -> Kind NodePort 30080 -> istio-ingressgateway
+#     -> Envoy applies the VirtualService weight -> blue or green pod
+# blueGreen.enabled=true renders both the "blue" and "green" Deployments.
+# Both slots start on the same locally-built image/tag; bump
+# blueGreen.slots.green.image.tag to a different tag later to practice a
+# real version rollout, then cut over with blueGreen.activeSlot=green.
 Invoke-Exe helm upgrade --install space-taco $ChartDir `
     --namespace $Namespace `
     '--set' 'image.registry=' `
     --set "image.repository=$ImageName" `
     --set "image.tag=$ImageTag" `
     '--set' 'imageVerification.enabled=false' `
-    '--set' 'replicaCount=1' `
-    '--set' 'ingress.enabled=true' `
-    '--set' 'ingress.className=nginx' `
-    '--set' 'ingress.hosts[0].host=localhost' `
-    '--set' 'ingress.hosts[0].paths[0].path=/' `
-    '--set' 'ingress.hosts[0].paths[0].pathType=Prefix' `
+    '--set' 'ingress.enabled=false' `
+    '--set' 'istio.enabled=true' `
+    '--set' 'istio.gateway.hosts[0]=*' `
+    '--set' 'blueGreen.enabled=true' `
+    '--set' 'blueGreen.activeSlot=blue' `
+    --set "blueGreen.slots.blue.image.tag=$ImageTag" `
+    --set "blueGreen.slots.green.image.tag=$ImageTag" `
+    '--set' 'blueGreen.slots.blue.replicaCount=1' `
+    '--set' 'blueGreen.slots.green.replicaCount=1' `
     --wait --timeout 3m
 
 # ---------------------------------------------------------------------------
@@ -223,11 +262,13 @@ Invoke-Exe helm upgrade --install space-taco $ChartDir `
 Write-Host ""
 Write-Info "Space Taco is live! Test it with:"
 Write-Host ""
-Write-Host "  # Open in browser (ingress via nginx on Kind NodePort 30080 -> host 8080)" -ForegroundColor Cyan
-Write-Host "  http://localhost:8080" -ForegroundColor Cyan
+Write-Host "  # Traffic now flows through the Istio ingress gateway, not nginx:" -ForegroundColor Cyan
+Write-Host "  # browser -> localhost:8080 -> Kind NodePort 30080 -> istio-ingressgateway -> blue/green pod" -ForegroundColor Cyan
+Write-Host "  # The Gateway accepts any hostname ('*') in Kind, so plain http://localhost:8080 works" -ForegroundColor Cyan
+Write-Host "  # in a browser -- no Host header needed." -ForegroundColor Cyan
 Write-Host ""
-Write-Host "  # Health check" -ForegroundColor Cyan
-Write-Host "  curl http://localhost:8080/healthz" -ForegroundColor Cyan
+Write-Host "  # Health check (x-taco-slot response header shows which slot answered)" -ForegroundColor Cyan
+Write-Host "  curl -i http://localhost:8080/healthz" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  # Menu" -ForegroundColor Cyan
 Write-Host "  curl http://localhost:8080/api/v1/menu | jq ." -ForegroundColor Cyan
@@ -236,5 +277,18 @@ Write-Host "  # Place an order" -ForegroundColor Cyan
 Write-Host '  curl -X POST http://localhost:8080/api/v1/orders \' -ForegroundColor Cyan
 Write-Host '    -H "Content-Type: application/json" \' -ForegroundColor Cyan
 Write-Host '    -d "{\"customer_id\":\"EARTHLING-001\",\"items\":[{\"filling\":\"black_hole_bbq\",\"quantity\":2}]}"' -ForegroundColor Cyan
+Write-Host ""
+Write-Info "Practice a blue/green cutover:"
+Write-Host ""
+Write-Host "  # 1. Roll out a new version to the idle 'green' slot (bump the tag to anything" -ForegroundColor Cyan
+Write-Host "  #    different from `$ImageTag once you build a second image) -- it receives 0% of" -ForegroundColor Cyan
+Write-Host "  #    traffic until you cut over, so this is safe to do live." -ForegroundColor Cyan
+Write-Host "  helm upgrade space-taco $ChartDir -n $Namespace --reuse-values --set blueGreen.slots.green.image.tag=<new-tag>" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "  # 2. Cut traffic over to green once it looks healthy" -ForegroundColor Cyan
+Write-Host "  helm upgrade space-taco $ChartDir -n $Namespace --reuse-values --set blueGreen.activeSlot=green" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "  # 3. Confirm the switch" -ForegroundColor Cyan
+Write-Host "  curl -i http://localhost:8080/healthz   # x-taco-slot: green" -ForegroundColor Cyan
 Write-Host ""
 Write-Info "Enjoy your intergalactic tacos!"

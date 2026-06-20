@@ -22,6 +22,13 @@ terraform {
       source  = "fluxcd/flux"
       version = "~> 1.4"
     }
+
+    # null provider — used in istio.tf to run a one-time `az aks mesh` CLI
+    # call that the azurerm provider doesn't support natively yet.
+    null = {
+      source  = "hashicorp/null"
+      version = "~> 3.2"
+    }
   }
 
   # Remote state stored in Azure Blob Storage, in its own key so a destroy

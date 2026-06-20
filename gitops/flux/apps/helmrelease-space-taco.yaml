@@ -15,6 +15,12 @@ spec:
   # If helm-controller tries to apply them before Kyverno registers its CRDs,
   # the install times out with ClusterPolicy status: 'NotFound'.
   # dependsOn ensures helm-controller waits for kyverno to be fully ready first.
+  #
+  # No Istio dependsOn here: Istio is the AKS-managed service mesh add-on
+  # (service_mesh_profile + the CNI-chaining null_resource in
+  # gitops/terraform/infra), provisioned by Terraform before
+  # flux_bootstrap_git ever runs — by the time this HelmRelease reconciles,
+  # the add-on (and its CNI DaemonSet) is already live.
   dependsOn:
     - name: kyverno
       namespace: kyverno
@@ -103,3 +109,30 @@ spec:
 
     # No anti-affinity needed for a single-replica dev deploy.
     affinity: {}
+
+    # Istio + blue/green — additive to the Web App Routing Ingress above, not
+    # a replacement for it. The Ingress keeps serving traffic at
+    # taco-delivery.autoaaron.xyz exactly as before; this adds a *second*,
+    # mesh-aware entry point (the AKS-managed Istio external ingress
+    # gateway's LoadBalancer Service) to practice blue/green cutovers
+    # against, since plain Ingress->Service traffic bypasses Istio's
+    # VirtualService weighting entirely.
+    istio:
+      enabled: true
+      gateway:
+        # Pod label on the AKS add-on's external ingress gateway deployment
+        # (not the chart's "istio: ingressgateway" default, which matches a
+        # self-managed upstream Istio install like the one used in Kind).
+        selector:
+          istio: aks-istio-ingressgateway-external
+        hosts:
+          - "taco-delivery.autoaaron.xyz"
+
+    blueGreen:
+      enabled: true
+      activeSlot: blue
+      slots:
+        blue:
+          replicaCount: 1
+        green:
+          replicaCount: 1

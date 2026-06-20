@@ -58,6 +58,31 @@ resource "azurerm_kubernetes_cluster" "this" {
     dns_zone_ids = [data.azurerm_dns_zone.main.id]
   }
 
+  # Istio-based service mesh add-on — the AKS-managed Istio control plane
+  # (istiod, CNI, ingress gateway), as opposed to installing upstream Istio
+  # via Helm ourselves. https://learn.microsoft.com/azure/aks/istio-about
+  #
+  # external_ingress_gateway_enabled provisions a LoadBalancer Service
+  # (aks-istio-ingressgateway-external, in the aks-istio-ingress namespace)
+  # automatically — no separate Helm/Flux-managed gateway needed. This is
+  # purely additive: the existing Web App Routing ingress above is untouched
+  # and keeps serving taco-delivery.autoaaron.xyz exactly as before. The
+  # mesh gateway is a *second* entry point to practice blue/green against —
+  # find its IP with:
+  #   kubectl get svc aks-istio-ingressgateway-external -n aks-istio-ingress
+  #
+  # NOTE: this block does NOT enable Istio CNI chaining — the azurerm
+  # provider doesn't expose that setting yet
+  # (https://github.com/hashicorp/terraform-provider-azurerm/issues/31177).
+  # See istio.tf for the one-time `az aks mesh` CLI call that enables it;
+  # without it, injected sidecars use the privileged legacy istio-init
+  # container, which Kyverno's space-taco-pod-security ClusterPolicy rejects.
+  service_mesh_profile {
+    mode                             = "Istio"
+    revisions                        = [local.istio_revision]
+    external_ingress_gateway_enabled = true
+  }
+
   tags = local.common_tags
 
   lifecycle {

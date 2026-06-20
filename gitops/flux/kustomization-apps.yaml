@@ -6,6 +6,12 @@
 # dependsOn is intentional:
 #   Kyverno must be healthy before space-taco pods are admitted, otherwise the
 #   image-signature ValidatingWebhookConfiguration blocks the first pod start.
+#
+#   Istio is the AKS-managed service mesh add-on (service_mesh_profile in
+#   gitops/terraform/infra/aks.tf), not a Flux-managed HelmRelease, so there's
+#   no Istio healthCheck here — Terraform provisions it (and the CNI chaining
+#   mode, via istio.tf) before flux_bootstrap_git ever runs, so it's already
+#   live by the time this Kustomization reconciles.
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:

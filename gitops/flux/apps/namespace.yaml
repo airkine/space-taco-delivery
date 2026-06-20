@@ -13,6 +13,12 @@ metadata:
 # Namespace for the space-taco-delivery application.
 # Created here (not in the Helm chart) so Flux can manage it independently of
 # the HelmRelease lifecycle — deleting the HelmRelease won't nuke the namespace.
+#
+# Istio control plane: this cluster uses the AKS-managed Istio service mesh
+# add-on (service_mesh_profile in gitops/terraform/infra/aks.tf), not a
+# self-managed Helm install — the add-on provisions its own
+# "aks-istio-system" namespace and istiod/cni/gateway, so there's nothing to
+# pre-create here for it.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -21,4 +27,10 @@ metadata:
     # Kyverno ClusterPolicies select namespaces by label.
     # Adding this label opts the namespace into image-signature verification.
     policy.sigstore.dev/include: "true"
+    # The AKS Istio add-on's sidecar-injection webhook keys off a
+    # revision-specific label, NOT the generic upstream "istio-injection:
+    # enabled" (that label is explicitly documented to be a no-op for the
+    # add-on). Must match gitops/terraform/infra/locals.tf's
+    # local.istio_revision exactly, or pods silently don't get a sidecar.
+    istio.io/rev: asm-1-28
     app.kubernetes.io/managed-by: flux

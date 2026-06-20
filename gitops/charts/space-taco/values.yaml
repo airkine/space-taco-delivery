@@ -113,3 +113,42 @@ env:
 imageVerification:
   enabled: true
   rekorURL: "https://rekor.sigstore.dev"
+
+# Istio service mesh integration. Disabled by default so existing consumers of
+# this chart (and the plain Ingress path) are unaffected until they opt in.
+istio:
+  enabled: false
+  gateway:
+    # Label selector matching the Istio ingress gateway pods (the default
+    # label applied by the `istio/gateway` Helm chart's "ingress" preset).
+    selector:
+      istio: ingressgateway
+    # Hostnames the Gateway/VirtualService will accept traffic for.
+    # Override per environment: "space-taco.local" for Kind,
+    # "taco-delivery.autoaaron.xyz" for AKS.
+    hosts:
+      - space-taco.local
+
+# Blue/green deployment. When enabled, the chart renders two Deployments
+# ("blue" and "green") instead of one, both selected by the same Service, with
+# an Istio VirtualService/DestinationRule sending 100% of traffic to
+# activeSlot and 0% to the other. Both slots run at full replica count at all
+# times so the idle slot is a hot standby ready for an instant cutover —
+# switch traffic with: helm upgrade --set blueGreen.activeSlot=green
+# Requires istio.enabled: true (traffic weighting only works for requests
+# entering through an Istio Gateway; plain Ingress->Service traffic is
+# resolved by kube-proxy before Envoy ever sees it).
+blueGreen:
+  enabled: false
+  activeSlot: blue
+  slots:
+    blue:
+      replicaCount: 2
+      image:
+        # Empty tag means "inherit .Values.image.tag" — set this explicitly
+        # to roll out a different version to this slot only.
+        tag: ""
+    green:
+      replicaCount: 2
+      image:
+        tag: ""

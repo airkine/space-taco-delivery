@@ -1,0 +1,25 @@
+{{- if .Values.istio.enabled }}
+# Istio Gateway — the mesh's north-south entry point. Selects the
+# istio-ingressgateway pods (via .Values.istio.gateway.selector) and accepts
+# plain HTTP on port 80 for the configured hostnames. TLS termination is left
+# out for now (practice/dev setup); add a "tls:" block + https server entry
+# here when moving beyond local experimentation.
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: {{ include "space-taco.fullname" . }}
+  labels:
+    {{- include "space-taco.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- toYaml .Values.istio.gateway.selector | nindent 4 }}
+  servers:
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        {{- range .Values.istio.gateway.hosts }}
+        - {{ . | quote }}
+        {{- end }}
+{{- end }}

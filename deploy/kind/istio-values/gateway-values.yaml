@@ -1,0 +1,47 @@
+# =============================================================================
+# Values for the `istio/gateway` Helm chart in Kind.
+#
+# This is the Istio ingress gateway — the actual entry point traffic must
+# pass through for the space-taco chart's blue/green VirtualService weights
+# to take effect (a plain Ingress -> Service hop resolves via kube-proxy
+# before Envoy ever sees the request, bypassing Istio's routing rules
+# entirely). It replaces the NGINX ingress controller previously installed
+# by this bootstrap script.
+#
+# NodePort 30080/30443 reuses the same Kind extraPortMappings already defined
+# in kind-cluster.yaml (containerPort 30080/30443 -> hostPort 8080/8443), so
+# http://localhost:8080 keeps working exactly as it did with NGINX.
+# =============================================================================
+
+service:
+  type: NodePort
+  ports:
+    # Istio's own readiness/health endpoint — required by the chart, keep as
+    # a plain ClusterIP-style port (no nodePort needed).
+    - name: status-port
+      port: 15021
+      protocol: TCP
+      targetPort: 15021
+    - name: http2
+      port: 80
+      protocol: TCP
+      targetPort: 8080
+      nodePort: 30080
+    - name: https
+      port: 443
+      protocol: TCP
+      targetPort: 8443
+      nodePort: 30443
+
+# Pin the gateway to the control-plane node — it's the only node labelled
+# ingress-ready=true in kind-cluster.yaml — and tolerate its NoSchedule
+# taint, matching how the NGINX controller was scheduled before it.
+nodeSelector:
+  ingress-ready: "true"
+tolerations:
+  - key: node-role.kubernetes.io/control-plane
+    operator: Equal
+    effect: NoSchedule
+
+# Single replica — local dev cluster, no HA needed.
+replicaCount: 1
