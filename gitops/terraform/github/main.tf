@@ -85,18 +85,22 @@ resource "github_actions_secret" "azure_subscription_id" {
 # ---------------------------------------------------------------------------
 # Environments
 # ---------------------------------------------------------------------------
-resource "github_repository_environment" "dev" {
-  repository  = github_repository.space_taco.name
-  environment = "dev"
-}
-
+# Only ONE GitHub Environment exists in this repo: "dev". It is the gate the
+# Terraform Apply jobs run under (see .github/workflows/terraform.yml and
+# terraform-destroy.yml) — every apply, regardless of which branch triggered
+# it, requires manual reviewer approval here before any infrastructure
+# changes happen. There used to be a second "prod" environment used only for
+# pushes to main, but maintaining two nearly-identical environments added
+# confusion without adding safety (this repo has exactly one cluster/repo to
+# protect), so it was removed and its reviewer/branch-policy settings were
+# folded into "dev".
 data "github_user" "airkine" {
   username = "airkine"
 }
 
-resource "github_repository_environment" "prod" {
+resource "github_repository_environment" "dev" {
   repository  = github_repository.space_taco.name
-  environment = "prod"
+  environment = "dev"
 
   reviewers {
     users = [data.github_user.airkine.id]

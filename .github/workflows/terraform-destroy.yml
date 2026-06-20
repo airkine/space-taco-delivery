@@ -16,12 +16,23 @@ name: Terraform Destroy
 # never open. Do not repoint `working-directory` at gitops/terraform or at
 # gitops/terraform/github.
 #
+# This is split into two jobs — destroy-plan and destroy-apply — rather than
+# one job that does both. Reason: the "dev" GitHub Environment (see
+# gitops/terraform/github/main.tf) requires a human reviewer to approve
+# before any job tagged `environment: dev` runs a single step. If the
+# destroy plan and the actual destroy lived in the same job, the reviewer
+# would be asked to approve the teardown BEFORE seeing what it would
+# actually remove. Splitting them means the plan is already sitting in the
+# job log by the time destroy-apply pauses for approval.
+#
 # Safety gates:
 #   1. Must be dispatched from the main branch (feature branches are rejected).
 #   2. The 'confirm' input must contain the exact string "destroy" before any
 #      infrastructure work begins.
-#   3. A plan-destroy step runs first and writes its output to the job log so
-#      there is a permanent audit trail of what was removed and when.
+#   3. destroy-plan runs first and writes its output to the job log, giving a
+#      permanent audit trail of what will be removed, visible to the
+#      reviewer before they approve destroy-apply.
+#   4. destroy-apply requires manual approval via the "dev" GitHub Environment.
 on:
   workflow_dispatch:
     inputs:
@@ -44,13 +55,14 @@ permissions:
   id-token: write
 
 jobs:
-  destroy:
-    name: Terraform Destroy (infra only)
+  # ---------------------------------------------------------------------------
+  # Plan the destroy. No `environment:` gate here, so it always runs
+  # immediately (after the safety gates below) and its output lands in the
+  # job log before destroy-apply ever prompts a reviewer for approval.
+  # ---------------------------------------------------------------------------
+  destroy-plan:
+    name: Terraform Plan Destroy (infra only)
     runs-on: ubuntu-latest
-    # Mirror the environment gate used by terraform.yml so the same required
-    # reviewers and secrets apply: prod for main, dev for any other branch
-    # (though non-main branches are rejected by the branch-guard step below).
-    environment: ${{ github.ref == 'refs/heads/main' && 'prod' || 'dev' }}
     env:
       # azurerm provider + backend auth via OIDC — no long-lived client secret.
       ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
@@ -86,7 +98,7 @@ jobs:
           exit 1
 
       # -----------------------------------------------------------------------
-      # Setup — identical to terraform.yml's terraform-infra job
+      # Setup — identical to terraform.yml's terraform-infra-plan job
       # -----------------------------------------------------------------------
       - uses: actions/checkout@v4
         with:
@@ -115,8 +127,10 @@ jobs:
 
       # -----------------------------------------------------------------------
       # Plan destroy — runs first to produce a permanent log of what will be
-      # removed.  The plan is saved to tfplan so the apply step uses the exact
-      # same changeset (no drift between plan and apply). Because this job's
+      # removed, visible to the reviewer BEFORE they approve destroy-apply.
+      # The plan is saved to tfplan and handed to destroy-apply via artifact
+      # so the apply step uses the exact same changeset (no drift between
+      # what was reviewed and what gets applied). Because this job's
       # working-directory is gitops/terraform/infra, the plan can only ever
       # contain AKS/Flux resources — there is no github_repository resource in
       # this state for it to reach.
@@ -136,17 +150,87 @@ jobs:
           TF_VAR_github_token:          ${{ secrets.TF_GITHUB_TOKEN }}
           TF_VAR_azure_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      # Hand the exact destroy plan to destroy-apply (a different runner) so
+      # it applies precisely what the reviewer approved.
+      - name: Upload destroy plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-destroy-infra
+          path: gitops/terraform/infra/tfplan
+          retention-days: 1
+
+      - name: Write plan job summary
+        if: always()
+        run: |
+          echo "## Terraform Plan Destroy — Job Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Scope: \`gitops/terraform/infra\` only — the GitHub repository (\`gitops/terraform/github\`) is a separate state and will NOT be touched." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Review the plan below, then approve the **destroy-apply** job's pending deployment to proceed." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Destroy plan output" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat plan_output.txt 2>/dev/null || echo "(plan output not available)" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+  # ---------------------------------------------------------------------------
+  # Apply the destroy. Gated by the "dev" GitHub Environment, which requires
+  # reviewer approval (gitops/terraform/github/main.tf). By the time the
+  # reviewer is prompted, destroy-plan has already finished and its full
+  # output is visible in the job summary / log above.
+  # ---------------------------------------------------------------------------
+  destroy-apply:
+    name: Terraform Destroy (infra only)
+    needs: destroy-plan
+    runs-on: ubuntu-latest
+    environment: dev
+    env:
+      ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      ARM_USE_OIDC:        "true"
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.7"
+
+      - name: Terraform Init
+        run: terraform init
+        env:
+          GITHUB_TOKEN: ${{ secrets.TF_GITHUB_TOKEN }}
+
+      # Re-downloads the exact destroy plan produced by destroy-plan — this
+      # is what the reviewer approved, so it's what gets applied.
+      - name: Download destroy plan artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-destroy-infra
+          path: gitops/terraform/infra
+
       # -----------------------------------------------------------------------
-      # Destroy — applies the saved plan from the previous step.
+      # Destroy — applies the saved plan from destroy-plan.
       # Using `terraform apply tfplan` (not `terraform destroy -auto-approve`)
       # ensures the apply uses exactly the plan generated above; it cannot drift.
+      # -auto-approve is safe here because the plan was already reviewed in
+      # destroy-plan AND a human reviewer already approved this environment's
+      # pending deployment.
       # -----------------------------------------------------------------------
       - name: Terraform Destroy
-        run: |
-          # Apply the saved destroy plan produced in the previous step.
-          # -auto-approve is safe here because the plan was already reviewed
-          # and the confirmation gate already ran.
-          terraform apply -auto-approve tfplan
+        run: terraform apply -auto-approve tfplan
         env:
           TF_VAR_github_token:          ${{ secrets.TF_GITHUB_TOKEN }}
           TF_VAR_azure_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
@@ -168,8 +252,3 @@ jobs:
           echo "| Branch | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Run ID | [${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |" >> $GITHUB_STEP_SUMMARY
           echo "| Status | ${{ job.status }} |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Destroy plan output" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          cat plan_output.txt 2>/dev/null || echo "(plan output not available)" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY

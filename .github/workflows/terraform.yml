@@ -1,10 +1,12 @@
 name: Terraform
 
-# This workflow manages TWO independent Terraform states, each in its own
-# job with its own working-directory:
-#   - terraform-github : gitops/terraform/github  (repo, branch protection,
-#                         secrets, labels, environments)
-#   - terraform-infra  : gitops/terraform/infra   (AKS cluster, Flux bootstrap)
+# This workflow manages TWO independent Terraform states, split into FOUR
+# jobs (a plan job and an apply job for each state), each with its own
+# working-directory:
+#   - terraform-github-plan / terraform-github-apply : gitops/terraform/github
+#       (repo, branch protection, secrets, labels, environments)
+#   - terraform-infra-plan  / terraform-infra-apply   : gitops/terraform/infra
+#       (AKS cluster, Flux bootstrap)
 #
 # They are split into separate state files (separate "backend" key per
 # versions.tf in each directory) so that the Terraform Destroy workflow,
@@ -12,10 +14,31 @@ name: Terraform
 # or delete the GitHub repository itself. See gitops/terraform/README.md
 # "Why two states" for the incident that prompted this split.
 #
-# terraform-infra depends on terraform-github (needs:) purely for ordering —
+# Each state is ALSO split into a "plan" job and an "apply" job, rather than
+# one job that does both. Reason: this repo's "dev" GitHub Environment
+# (gitops/terraform/github/main.tf) requires a human reviewer to click
+# "Approve and deploy" before any job tagged `environment: dev` runs a
+# single step. If plan and apply lived in the same job, the reviewer would
+# be asked to approve BEFORE seeing what would actually change — approving
+# blind. Splitting them means:
+#   - The "plan" job carries no `environment:` and always runs immediately,
+#     posting the full plan as a PR comment (or just to the job log on a
+#     direct push / workflow_dispatch).
+#   - The "apply" job carries `environment: dev` and therefore pauses for
+#     reviewer approval — by the time it does, the paired "plan" job has
+#     already finished in the same workflow run, so its output is right
+#     there for the reviewer to read before approving.
+#   - The apply job downloads the EXACT plan file the plan job produced
+#     (via upload-artifact/download-artifact) and applies that, so what
+#     gets approved is guaranteed to be what gets applied — no replanning,
+#     no drift between what was reviewed and what ran.
+#
+# terraform-infra-apply needs terraform-github-apply purely for ordering —
 # on a from-scratch apply we want the repo to exist before flux_bootstrap_git
 # tries to push manifests to it. There is no actual Terraform resource
-# dependency between the two states.
+# dependency between the two states. terraform-infra-plan has no such
+# dependency (a plan never writes anything) and runs in parallel with the
+# github jobs.
 
 on:
   push:
@@ -49,14 +72,13 @@ permissions:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # GitHub resources — repo, branch protection, secrets, labels, environments.
-  # Has no azurerm provider resources, but still needs Azure Login because the
-  # state backend itself (backend "azurerm") lives in Azure Blob Storage.
+  # GitHub resources — PLAN. No `environment:` gate, so this always runs
+  # immediately and its output is visible before the paired apply job below
+  # ever prompts a reviewer for approval.
   # ---------------------------------------------------------------------------
-  terraform-github:
-    name: Terraform Plan / Apply (github)
+  terraform-github-plan:
+    name: Terraform Plan (github)
     runs-on: ubuntu-latest
-    environment: ${{ github.ref == 'refs/heads/main' && 'prod' || 'dev' }}
     defaults:
       run:
         working-directory: gitops/terraform/github
@@ -116,6 +138,16 @@ jobs:
           TF_VAR_azure_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         continue-on-error: true
 
+      # Hand the exact plan binary to terraform-github-apply (a different
+      # runner) so it applies precisely what was reviewed here — never a
+      # freshly recomputed plan.
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-github
+          path: gitops/terraform/github/tfplan
+          retention-days: 1
+
       # Post plan output as a PR comment so reviewers can see exactly what will change.
       - name: Comment plan on PR
         if: github.event_name == 'pull_request'
@@ -135,18 +167,69 @@ jobs:
               body: `## 🌮 Terraform Plan — github\n\`\`\`hcl\n${truncated}\n\`\`\``
             });
 
+  # ---------------------------------------------------------------------------
+  # GitHub resources — APPLY. Gated by the "dev" GitHub Environment, which
+  # requires reviewer approval (gitops/terraform/github/main.tf). The plan
+  # the reviewer needs is already sitting in terraform-github-plan's job log
+  # / PR comment by the time this pauses for approval.
+  # ---------------------------------------------------------------------------
+  terraform-github-apply:
+    name: Terraform Apply (github)
+    needs: terraform-github-plan
+    # Apply on:
+    #   - push to main (the normal GitOps flow), OR
+    #   - workflow_dispatch from main with the 'apply' input checked (default: true).
+    # PR builds and dispatches from non-main branches are always plan-only —
+    # this job is skipped entirely for them, so no approval prompt appears.
+    # fromJSON() is required because boolean workflow_dispatch inputs arrive
+    # as the strings 'true'/'false', not native booleans.
+    if: |
+      github.ref == 'refs/heads/main' && (
+        github.event_name == 'push' ||
+        (github.event_name == 'workflow_dispatch' && fromJSON(inputs.apply))
+      )
+    runs-on: ubuntu-latest
+    environment: dev
+    defaults:
+      run:
+        working-directory: gitops/terraform/github
+    env:
+      ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      ARM_USE_OIDC:        "true"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.7"
+
+      - name: Terraform Init
+        run: terraform init
+        env:
+          GITHUB_TOKEN: ${{ secrets.TF_GITHUB_TOKEN }}
+
+      # Re-downloads the exact plan file terraform-github-plan produced —
+      # this is what the reviewer approved, so it's what gets applied.
+      - name: Download plan artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-github
+          path: gitops/terraform/github
+
       - name: Terraform Apply
-        # Apply on:
-        #   - push to main (the normal GitOps flow), OR
-        #   - workflow_dispatch from main with the 'apply' input checked (default: true).
-        # PR builds and dispatches from non-main branches are always plan-only.
-        # fromJSON() is required because boolean workflow_dispatch inputs arrive
-        # as the strings 'true'/'false', not native booleans.
-        if: |
-          github.ref == 'refs/heads/main' && (
-            github.event_name == 'push' ||
-            (github.event_name == 'workflow_dispatch' && fromJSON(inputs.apply))
-          )
         run: terraform apply -auto-approve tfplan
         env:
           TF_VAR_github_token:          ${{ secrets.TF_GITHUB_TOKEN }}
@@ -155,14 +238,13 @@ jobs:
           TF_VAR_azure_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
   # ---------------------------------------------------------------------------
-  # Azure infrastructure — AKS cluster + Flux bootstrap.
-  # Runs after terraform-github so a from-scratch apply has a repo to push to.
+  # Azure infrastructure — PLAN. Runs in parallel with the github jobs above;
+  # a plan never writes anything, so it has no ordering dependency on the
+  # repo existing yet.
   # ---------------------------------------------------------------------------
-  terraform-infra:
-    name: Terraform Plan / Apply (infra)
-    needs: terraform-github
+  terraform-infra-plan:
+    name: Terraform Plan (infra)
     runs-on: ubuntu-latest
-    environment: ${{ github.ref == 'refs/heads/main' && 'prod' || 'dev' }}
     defaults:
       run:
         working-directory: gitops/terraform/infra
@@ -172,17 +254,10 @@ jobs:
       ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       ARM_USE_OIDC:        "true"
-
     steps:
       - uses: actions/checkout@v4
         with:
-          # flux_bootstrap_git commits Flux manifests back to main.
-          # A token with contents:write is required (GITHUB_TOKEN has that when
-          # permissions.contents = write is set above). Fall back to GITHUB_TOKEN
-          # so checkout still authenticates if TF_GITHUB_TOKEN isn't set/exposed
-          # for this environment (e.g. PR builds running under "dev").
           token: ${{ secrets.GITHUB_TOKEN }}
-          # Fetch full history so the flux provider can push cleanly.
           fetch-depth: 0
 
       - name: Azure Login (OIDC)
@@ -224,6 +299,13 @@ jobs:
           TF_VAR_azure_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         continue-on-error: true
 
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-infra
+          path: gitops/terraform/infra/tfplan
+          retention-days: 1
+
       # Post plan output as a PR comment so reviewers can see exactly what will change.
       - name: Comment plan on PR
         if: github.event_name == 'pull_request'
@@ -243,18 +325,67 @@ jobs:
               body: `## 🌮 Terraform Plan — infra\n\`\`\`hcl\n${truncated}\n\`\`\``
             });
 
+  # ---------------------------------------------------------------------------
+  # Azure infrastructure — APPLY. Needs terraform-infra-plan (to inherit its
+  # exact plan file) AND terraform-github-apply (ordering only — so a
+  # from-scratch apply has a repo for flux_bootstrap_git to push to). Gated
+  # by the same "dev" environment as terraform-github-apply, so the reviewer
+  # gets one approval prompt per state, each with its plan already visible.
+  # ---------------------------------------------------------------------------
+  terraform-infra-apply:
+    name: Terraform Apply (infra)
+    needs: [terraform-infra-plan, terraform-github-apply]
+    if: |
+      github.ref == 'refs/heads/main' && (
+        github.event_name == 'push' ||
+        (github.event_name == 'workflow_dispatch' && fromJSON(inputs.apply))
+      )
+    runs-on: ubuntu-latest
+    environment: dev
+    defaults:
+      run:
+        working-directory: gitops/terraform/infra
+    env:
+      ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      ARM_USE_OIDC:        "true"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # flux_bootstrap_git commits Flux manifests back to main.
+          # A token with contents:write is required (GITHUB_TOKEN has that when
+          # permissions.contents = write is set above).
+          token: ${{ secrets.GITHUB_TOKEN }}
+          # Fetch full history so the flux provider can push cleanly.
+          fetch-depth: 0
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.7"
+
+      - name: Terraform Init
+        run: terraform init
+        env:
+          GITHUB_TOKEN: ${{ secrets.TF_GITHUB_TOKEN }}
+
+      # Re-downloads the exact plan file terraform-infra-plan produced — this
+      # is what the reviewer approved, so it's what gets applied.
+      - name: Download plan artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-infra
+          path: gitops/terraform/infra
+
       - name: Terraform Apply
-        # Apply on:
-        #   - push to main (the normal GitOps flow), OR
-        #   - workflow_dispatch from main with the 'apply' input checked (default: true).
-        # PR builds and dispatches from non-main branches are always plan-only.
-        # fromJSON() is required because boolean workflow_dispatch inputs arrive
-        # as the strings 'true'/'false', not native booleans.
-        if: |
-          github.ref == 'refs/heads/main' && (
-            github.event_name == 'push' ||
-            (github.event_name == 'workflow_dispatch' && fromJSON(inputs.apply))
-          )
         run: terraform apply -auto-approve tfplan
         env:
           TF_VAR_github_token:          ${{ secrets.TF_GITHUB_TOKEN }}

@@ -53,7 +53,7 @@ Both `github/` and `infra/` follow the same file layout:
 | `github_branch_protection` | Protects `main`: requires `Lint & Test` + `Build & Publish`, 1 review, signed commits |
 | `github_issue_label` | 10 labels across `area/`, `type/`, `priority/` prefixes |
 | `github_actions_secret` | Azure OIDC secrets — uses current `value` field (deprecated `plaintext_value` removed in github provider v6) |
-| `github_repository_environment` | `dev` (unprotected) and `prod` (requires reviewer, protected branches only) |
+| `github_repository_environment` | `dev` — the only GitHub Environment in this repo; requires reviewer approval, protected branches only |
 
 `github_token` here also needs `repo` + `admin:org` scopes (repo administration, secrets, branch protection).
 
@@ -62,10 +62,51 @@ Both `github/` and `infra/` follow the same file layout:
 | Resource | Details |
 |----------|---------|
 | `azurerm_resource_group` | `rg-space-taco-<env>` in `var.location` |
-| `azurerm_kubernetes_cluster` | `aks-space-taco-<env>` — Free tier control plane, kubenet, workload identity + OIDC issuer enabled, Web App Routing addon with `autoaaron.xyz` DNS zone wired |
+| `azurerm_kubernetes_cluster` | `aks-space-taco-<env>` — Free tier control plane, kubenet, workload identity + OIDC issuer enabled, Web App Routing addon with `autoaaron.xyz` DNS zone wired, Istio service mesh add-on (`service_mesh_profile`) enabled |
 | `azurerm_kubernetes_cluster_node_pool` | `apps` user pool (1 node) — hosts Flux, Kyverno, and the space-taco application; separated from the system pool so AKS infrastructure and app workloads never compete |
 | `azurerm_role_assignment.external_dns_contributor` | Grants **DNS Zone Contributor** on `rg-management` to the **web app routing managed identity** (`web_app_routing[0].web_app_routing_identity[0].object_id`) — this is the MSI that the AKS-managed `external-dns` pod authenticates with; it is distinct from `kubelet_identity` |
+| `null_resource.istio_cni_chaining` (`istio.tf`) | One-time `az aks mesh proxy-redirection-mechanism` CLI call — see "Istio service mesh add-on" below for why this can't be a native Terraform resource yet |
 | `flux_bootstrap_git` | Installs Flux v2 controllers into the cluster and commits bootstrap manifests to `gitops/flux/flux-system/` |
+
+### Istio service mesh add-on
+
+The cluster uses the **AKS-managed Istio service mesh add-on**
+(`service_mesh_profile` in `aks.tf`) rather than installing upstream Istio
+via Helm — that approach is used for the local Kind cluster instead (see
+`deploy/kind/bootstrap-local.ps1`/`.sh`), where there's no managed add-on
+available.
+
+- **Revision is pinned explicitly** via `local.istio_revision` (`locals.tf`),
+  currently `asm-1-28`. This must stay in sync with the `istio.io/rev` label
+  on the `space-taco` namespace in `gitops/flux/apps/namespace.yaml` — the
+  add-on's injection webhook keys off that exact revision string (the
+  generic upstream `istio-injection: enabled` label is a documented no-op
+  for the add-on). Before bumping the revision, confirm availability and
+  Kubernetes-version compatibility:
+  ```bash
+  az aks mesh get-revisions --location eastus2 -o table
+  ```
+- **CNI chaining isn't exposed by the azurerm provider yet**
+  ([hashicorp/terraform-provider-azurerm#31177](https://github.com/hashicorp/terraform-provider-azurerm/issues/31177)),
+  so `istio.tf` runs `az aks mesh proxy-redirection-mechanism --mechanism
+  CNIChaining` via a `null_resource` + `local-exec` provisioner as a
+  stopgap. Without it, injected sidecars use the privileged legacy
+  `istio-init` container, which Kyverno's `space-taco-pod-security`
+  ClusterPolicy rejects — the exact failure mode hit (and fixed) for the
+  self-managed Kind install. This requires an authenticated `az` CLI in
+  whatever environment runs `terraform apply` — already true in CI
+  (`terraform.yml`'s `terraform-infra` job runs `azure/login` first) and
+  true locally after `az login`.
+- **`external_ingress_gateway_enabled = true`** provisions
+  `aks-istio-ingressgateway-external` (a `LoadBalancer` Service in the
+  `aks-istio-ingress` namespace) automatically — no separate Helm/Flux
+  gateway needed. This is purely additive: the existing Web App Routing
+  Ingress keeps serving `taco-delivery.autoaaron.xyz` unchanged. The mesh
+  gateway is a *second* entry point for practicing blue/green — find its IP
+  with:
+  ```bash
+  kubectl get svc aks-istio-ingressgateway-external -n aks-istio-ingress
+  ```
 
 `infra/` still needs `var.github_token` and `var.github_owner` — not to manage any `github_*` resource (there are none here), but because the `flux` provider authenticates its git push with a plain HTTP username/password (the token), and builds the clone URL from the owner.
 
@@ -75,7 +116,7 @@ Managed as YAML; Flux reconciles them after bootstrap:
 
 | Manifest | Purpose |
 |----------|---------|
-| `namespace.yaml` | `space-taco` namespace with Kyverno label |
+| `namespace.yaml` | `space-taco` namespace with Kyverno label and `istio.io/rev` sidecar-injection label |
 | `helmrepository-ghcr.yaml` | OCI HelmRepository pointing at GHCR |
 | `kustomization-kyverno.yaml` | Kyverno HelmRepository + HelmRelease (admission controller). `retries` is nested under `remediation:` — placing it directly under `install:` or `upgrade:` is a Flux v2 schema validation error that blocks the entire `apps` kustomization. |
 | `helmrelease-space-taco.yaml` | HelmRelease for the app — latest chart from GHCR, single replica, no Redis. Same `retries`-under-`remediation` convention applies. |
@@ -101,8 +142,9 @@ AKS automatically labels every user-pool node with `kubernetes.azure.com/mode: u
 | 1× user node `Standard_B2pls_v2` (ARM64, 2 vCPU / 4 GiB) | ~$17 |
 | OS disks (2× 30 GB managed) | ~$4 |
 | Standard Load Balancer (egress) | ~$18 |
+| Istio external ingress gateway public IP (Standard) | ~$4 |
 | Terraform state storage (existing) | ~$1 |
-| **Total** | **~$57/month** |
+| **Total** | **~$61/month** |
 
 ### Swap to x86 if ARM is unavailable
 
@@ -181,19 +223,36 @@ edit the relevant file to change it.
 
 #### Workflow trigger matrix (`terraform.yml`)
 
-The workflow runs two jobs — `terraform-github` then `terraform-infra`
-(`needs:` ordering only; there's no Terraform resource dependency between
-the states) — both gated the same way:
+The workflow runs **four** jobs — a plan job and an apply job per state:
+`terraform-github-plan` → `terraform-github-apply`, and
+`terraform-infra-plan` → `terraform-infra-apply` (`needs:` ordering only;
+there's no Terraform resource dependency between the states).
 
-| Trigger | Branch | Plan | Apply |
-|---------|--------|------|-------|
-| `push` | `main` | ✓ | ✓ |
-| `pull_request` | any → `main` | ✓ (comment on PR) | ✗ |
-| `workflow_dispatch` | `main` (apply input = true) | ✓ | ✓ |
-| `workflow_dispatch` | `main` (apply input = false) | ✓ | ✗ |
+Plan jobs carry no `environment:` and always run immediately. Apply jobs
+carry `environment: dev`, which requires a reviewer to click **Approve and
+deploy** before any apply step runs — see [Approving an
+apply](#approving-an-apply) below.
+
+| Trigger | Branch | Plan jobs | Apply jobs |
+|---------|--------|-----------|------------|
+| `push` | `main` | ✓ | ✓ (after reviewer approval) |
+| `pull_request` | any → `main` | ✓ (comment on PR) | ✗ (skipped — not queued for review) |
+| `workflow_dispatch` | `main` (apply input = true) | ✓ | ✓ (after reviewer approval) |
+| `workflow_dispatch` | `main` (apply input = false) | ✓ | ✗ (skipped) |
 | `workflow_dispatch` | non-main | ✓ | ✗ always — branch guard |
 
 **Manual dispatch** is useful to force-apply after an out-of-band change (e.g. a role assignment applied via `az rest`), or to verify drift without committing anything. Navigate to **Actions → Terraform → Run workflow**, select the branch, and uncheck `apply` if you only want a plan.
+
+#### Approving an apply
+
+Because the apply jobs run under the `dev` GitHub Environment (which has a
+required reviewer — see `gitops/terraform/github/main.tf`), a queued apply
+shows up as a **pending deployment** rather than running immediately. The
+plan it would apply is *already visible* by then: the matching plan job
+(`terraform-github-plan` or `terraform-infra-plan`) has already finished in
+the same workflow run, so its output is sitting in the job log (and, for PR
+runs, as a comment on the PR). Read that plan, then approve the apply job
+from **Actions → \<run\> → Review deployments**.
 
 Secrets are stored as GitHub Actions **Secrets** and injected as `TF_VAR_*`:
 
@@ -208,10 +267,11 @@ Secrets are stored as GitHub Actions **Secrets** and injected as `TF_VAR_*`:
 
 On first apply (in order):
 
-1. `terraform-github` job creates the repo, branch protection, labels, secrets, environments
-2. `terraform-infra` job provisions the AKS cluster (~5-8 minutes)
-3. `terraform-infra` job runs `flux_bootstrap_git` — installs Flux controllers into the cluster and pushes manifests to `gitops/flux/flux-system/` (**this creates a new commit on `main`**)
-4. Flux discovers `gitops/flux/apps/` and reconciles Kyverno then the space-taco HelmRelease
+1. `terraform-github-plan` produces the plan, then (after reviewer approval) `terraform-github-apply` creates the repo, branch protection, labels, secrets, the `dev` environment
+2. `terraform-infra-plan` produces the plan, then (after reviewer approval) `terraform-infra-apply` provisions the AKS cluster (~5-8 minutes), including the Istio service mesh add-on
+3. `terraform-infra-apply` runs the `null_resource.istio_cni_chaining` `az aks mesh` call to switch the add-on to CNI chaining mode
+4. `terraform-infra-apply` runs `flux_bootstrap_git` — installs Flux controllers into the cluster and pushes manifests to `gitops/flux/flux-system/` (**this creates a new commit on `main`**)
+5. Flux discovers `gitops/flux/apps/` and reconciles Kyverno then the space-taco HelmRelease
 
 After apply, verify:
 
@@ -222,9 +282,13 @@ az aks get-credentials --name aks-space-taco-dev --resource-group rg-space-taco-
 # Check Flux
 flux get all -A
 
+# Check the Istio add-on
+az aks show --resource-group rg-space-taco-dev --name aks-space-taco-dev --query 'serviceMeshProfile.mode'
+kubectl get pods -n aks-istio-system
+
 # Watch the app
 kubectl get helmrelease -n space-taco
-kubectl get pods -n space-taco
+kubectl get pods -n space-taco   # expect 2/2 (app + istio-proxy sidecar)
 
 # Access the UI
 kubectl port-forward -n space-taco svc/space-taco 8080:80
@@ -232,6 +296,10 @@ kubectl port-forward -n space-taco svc/space-taco 8080:80
 
 # Access the public URL (once DNS propagates, ~60s after Ingress is admitted)
 curl http://taco-delivery.autoaaron.xyz/healthz
+
+# Access the Istio gateway directly (second entry point, for blue/green practice)
+GATEWAY_IP=$(kubectl get svc aks-istio-ingressgateway-external -n aks-istio-ingress -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+curl -H "Host: taco-delivery.autoaaron.xyz" "http://${GATEWAY_IP}/healthz"
 ```
 
 ## Troubleshooting — AKS-specific
@@ -245,6 +313,8 @@ curl http://taco-delivery.autoaaron.xyz/healthz
 | `exec format error` in space-taco pod | `GOARCH=amd64` was hardcoded in the Dockerfile, producing an amd64 binary even in the arm64 image layer | Fixed: switched to `ARG TARGETARCH` so each platform in the multi-arch build compiles the correct binary. |
 | Kyverno pods `Pending` with node affinity error | Chart default `nodeSelector: {kubernetes.azure.com/mode: user}` matched nothing when the user node pool isn't provisioned | Fixed: changed chart default to `nodeSelector: {}`. Override per environment if a user pool exists. |
 | `terraform destroy` deleted the GitHub repository | `github_repository` lived in the same state as the AKS cluster, so a destroy run against the combined state removed both | Fixed: split into `github/` and `infra/` modules with separate state files; the Terraform Destroy workflow's `working-directory` is pinned to `gitops/terraform/infra` and can never reach the repo's state. See "Why two states" above. |
+| `space-taco` pods stuck with the `istio-init` container rejected by Kyverno (`NET_ADMIN`/`NET_RAW`/`runAsUser=0` forbidden) | CNI chaining wasn't applied — `null_resource.istio_cni_chaining`'s `local-exec` either didn't run (no `az` CLI session) or ran before the add-on finished installing | Run manually: `az aks mesh proxy-redirection-mechanism --resource-group rg-space-taco-dev --name aks-space-taco-dev --mechanism CNIChaining`, then `kubectl rollout restart deployment -n space-taco` |
+| Sidecar not injected into `space-taco` pods at all | Namespace label `istio.io/rev` doesn't match the revision actually installed (e.g. `locals.tf`'s `istio_revision` was bumped without checking `az aks mesh get-revisions` first) | Check `az aks show ... --query 'serviceMeshProfile.istio.revisions'` and make sure `gitops/flux/apps/namespace.yaml`'s `istio.io/rev` label matches exactly |
 
 ## Destroying infrastructure
 
@@ -257,13 +327,14 @@ Use the **Terraform Destroy** workflow (`.github/workflows/terraform-destroy.yml
 3. Type `destroy` in the confirmation field (exact, case-sensitive)
 4. Click **Run workflow**
 
-The workflow runs two steps:
-- **Terraform Plan Destroy** — logs every resource that will be removed (permanent audit trail in the run log)
-- **Terraform Destroy** — applies the saved plan
+The workflow runs two jobs:
+- **`destroy-plan`** — runs the branch/confirmation gates, then logs every resource that will be removed (permanent audit trail in the run log)
+- **`destroy-apply`** — gated by the `dev` GitHub Environment (requires reviewer approval, same as `terraform.yml`'s apply jobs); applies the exact plan `destroy-plan` produced. By the time you're prompted to approve, `destroy-plan`'s output is already sitting in the job log/summary, so you're never approving a teardown blind.
 
 Safety gates that abort before touching any infrastructure:
 - Branch must be `main` (feature branches are rejected)
 - Confirmation input must equal `destroy` exactly
+- A reviewer must approve the `destroy-apply` job's pending deployment
 
 ### AKS / Flux (`infra/`) — locally
 
