@@ -2,7 +2,7 @@ apiVersion: v2
 name: space-taco
 description: 🌮🚀 Intergalactic Taco Delivery Microservice
 type: application
-version: 0.1.1
+version: 0.2.0
 appVersion: "0.1.1"
 
 keywords:
@@ -20,3 +20,9 @@ annotations:
       description: Initial intergalactic launch
     - kind: fixed
       description: Remove hardcoded nodeSelector from chart defaults so pods schedule on any available node
+    - kind: added
+      description: >-
+        Istio Gateway/VirtualService/DestinationRule support (istio.enabled)
+        and blue/green Deployment slots (blueGreen.enabled) switched via
+        blueGreen.activeSlot. Both disabled by default; no change to existing
+        single-Deployment behavior.

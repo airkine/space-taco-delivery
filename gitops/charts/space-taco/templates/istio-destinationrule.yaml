@@ -1,0 +1,21 @@
+{{- if and .Values.istio.enabled .Values.blueGreen.enabled }}
+# DestinationRule splits the single stable Service into "blue"/"green"
+# subsets keyed on the "version" pod label set by the blue/green Deployment
+# template. The Service itself still selects pods from both slots — Istio is
+# what tells them apart for routing purposes.
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: {{ include "space-taco.fullname" . }}
+  labels:
+    {{- include "space-taco.labels" . | nindent 4 }}
+spec:
+  host: {{ include "space-taco.fullname" . }}
+  subsets:
+    - name: blue
+      labels:
+        version: blue
+    - name: green
+      labels:
+        version: green
+{{- end }}

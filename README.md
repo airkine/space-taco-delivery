@@ -3,7 +3,7 @@
 > Intergalactic taco order microservice — GitOps practice repo
 
 A fully production-patterned microservice demonstrating GitOps best practices:
-**GitHub Actions · Terraform · Helm · Flux · Kyverno · Kind · signed OCI images · SBOMs**
+**GitHub Actions · Terraform · Helm · Flux · Kyverno · Istio · Kind · signed OCI images · SBOMs**
 
 ---
 
@@ -26,18 +26,30 @@ A fully production-patterned microservice demonstrating GitOps best practices:
         └──────┬────────┘
                │ Flux watches
                ▼
-     ┌─────────────────────┐
-     │   kind cluster      │
-     │  ┌───────────────┐  │
-     │  │   Kyverno     │  │ ← verifies image signature
-     │  │   (admit?)    │  │   before pod starts
-     │  └───────────────┘  │
-     │  ┌───────────────┐  │
-     │  │  space-taco   │  │ ← 2 replicas, distroless,
-     │  │  Deployment   │  │   nonroot, read-only FS
-     │  └───────────────┘  │
-     └─────────────────────┘
+     ┌──────────────────────────────────────────┐
+     │               kind cluster                │
+     │  ┌───────────────┐                        │
+     │  │   Kyverno     │  ← verifies image       │
+     │  │   (admit?)    │    signature before     │
+     │  └───────────────┘    pod starts           │
+     │            │                               │
+     │            ▼                               │
+     │  ┌───────────────┐   Gateway +              │
+     │  │ istio-ingress  │   VirtualService weight │
+     │  │   -gateway     │   100/0 by activeSlot   │
+     │  └───────┬───────┘                          │
+     │     ┌─────┴─────┐                            │
+     │     ▼           ▼                            │
+     │  ┌──────┐    ┌──────┐                         │
+     │  │ blue │    │green │  ← each: distroless,    │
+     │  │ Dep. │    │ Dep. │    nonroot, read-only FS,│
+     │  └──────┘    └──────┘    istio-proxy sidecar  │
+     └──────────────────────────────────────────┘
 ```
+
+Traffic enters through the Istio ingress gateway, not a plain Ingress — only
+requests routed through Istio's Envoy proxy honor the blue/green weight; see
+[Blue/Green with Istio](#bluegreen-with-istio) below.
 
 ## Repo Structure
 
@@ -59,7 +71,8 @@ A fully production-patterned microservice demonstrating GitOps best practices:
 │   │   │   ├── variables.tf
 │   │   │   └── outputs.tf
 │   │   └── infra/               # Azure IaC — AKS cluster + Flux bootstrap
-│   │       ├── aks.tf
+│   │       ├── aks.tf            # Cluster + Istio service mesh add-on (service_mesh_profile)
+│   │       ├── istio.tf          # One-time az CLI call enabling Istio CNI chaining mode
 │   │       ├── flux.tf
 │   │       ├── variables.tf
 │   │       └── outputs.tf
@@ -70,15 +83,19 @@ A fully production-patterned microservice demonstrating GitOps best practices:
 │           ├── Chart.yaml
 │           ├── values.yaml
 │           └── templates/
-│               ├── deployment.yaml
+│               ├── deployment.yaml          # Single Deployment, or blue+green pair
 │               ├── service.yaml
 │               ├── serviceaccount.yaml
-│               ├── kyverno-policies.yaml  # Image signing + pod sec
-│               └── flux-helmrelease.yaml
+│               ├── kyverno-policies.yaml    # Image signing + pod sec
+│               ├── istio-gateway.yaml       # istio.enabled
+│               ├── istio-virtualservice.yaml # istio.enabled (blue/green weighting)
+│               └── istio-destinationrule.yaml # istio.enabled + blueGreen.enabled
 │
 ├── deploy/kind/
-│   ├── kind-cluster.yaml       # 3-node local cluster config
-│   └── bootstrap-local.sh     # One-shot local dev setup
+│   ├── kind-cluster.yaml          # 3-node local cluster config
+│   ├── istio-values/              # Helm values for the local Istio install
+│   ├── bootstrap-local.sh         # One-shot local dev setup (Git Bash/WSL/macOS)
+│   └── bootstrap-local.ps1        # One-shot local dev setup (Windows PowerShell)
 │
 └── .github/workflows/
     ├── build.yml               # Build → sign → SBOM → push image
@@ -125,17 +142,21 @@ This will:
 2. Build the Go app image locally
 3. Load it into the cluster (no registry needed)
 4. Install Kyverno
-5. Deploy the Helm chart
+5. Install Istio (base, istiod, the `istio-cni` plugin, and the ingress gateway — replaces the old NGINX ingress controller)
+6. Deploy the Helm chart with `istio.enabled=true` and `blueGreen.enabled=true`
 
 ### Manual test commands
 
-```bash
-# Port-forward
-kubectl port-forward svc/space-taco -n space-taco 8080:80 &
+Traffic flows through the Istio ingress gateway, not a plain Ingress:
+`localhost:8080` → Kind NodePort 30080 → `istio-ingressgateway` → blue/green
+pod. The Gateway accepts any hostname (`*`) in Kind, so plain
+`http://localhost:8080` works directly in a browser or curl — no `Host`
+header needed. The `x-taco-slot` response header shows which slot answered.
 
+```bash
 # Health checks
-curl http://localhost:8080/healthz
-curl http://localhost:8080/readyz
+curl -i http://localhost:8080/healthz
+curl -i http://localhost:8080/readyz
 
 # Galactic menu
 curl http://localhost:8080/api/v1/menu | jq .
@@ -161,6 +182,37 @@ curl -X PATCH http://localhost:8080/api/v1/orders/TACO-000001/status \
   -H 'Content-Type: application/json' \
   -d '{"status": "launched"}'
 ```
+
+### Blue/Green with Istio
+
+The chart renders two Deployments (`space-taco-blue`, `space-taco-green`)
+behind one Service. An Istio `VirtualService`/`DestinationRule` sends 100% of
+traffic to `blueGreen.activeSlot` and 0% to the other slot — both run at full
+replica count the whole time, so a cutover is instant with no cold start.
+
+```bash
+# 1. Roll out a new version to the idle "green" slot — it receives 0% of
+#    traffic until you cut over, so this is safe to do live.
+helm upgrade space-taco gitops/charts/space-taco -n space-taco \
+  --reuse-values --set blueGreen.slots.green.image.tag=<new-tag>
+
+# 2. Cut traffic over to green once it looks healthy
+helm upgrade space-taco gitops/charts/space-taco -n space-taco \
+  --reuse-values --set blueGreen.activeSlot=green
+
+# 3. Confirm the switch
+curl -i http://localhost:8080/healthz   # x-taco-slot: green
+```
+
+This same `blueGreen.activeSlot` mechanism is wired into the AKS Flux
+deployment (`gitops/flux/apps/helmrelease-space-taco.yaml`) as a *second*,
+additive entry point alongside the existing Web App Routing Ingress. AKS uses
+the **AKS-managed Istio service mesh add-on** rather than the self-managed
+Helm install used in Kind (see
+[`gitops/terraform/README.md`](gitops/terraform/README.md#istio-service-mesh-add-on))
+— find the gateway's external IP with `kubectl get svc
+aks-istio-ingressgateway-external -n aks-istio-ingress` and curl it with a
+`Host: taco-delivery.autoaaron.xyz` header the same way.
 
 ## GitHub Repo Bootstrap (Terraform)
 

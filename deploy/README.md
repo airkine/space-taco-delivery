@@ -44,6 +44,8 @@ deploy/
 ├── README.md                       # (this file)
 └── kind/
     ├── kind-cluster.yaml           # Kind cluster topology (1 control-plane + 2 workers)
+    ├── istio-values/
+    │   └── gateway-values.yaml     # NodePort 30080/30443 mapping for the Istio ingress gateway
     ├── bootstrap-local.sh          # One-shot bootstrap script for Git Bash / WSL / macOS
     └── bootstrap-local.ps1         # One-shot bootstrap script for Windows PowerShell
 ```
@@ -77,10 +79,11 @@ The bootstrap script performs every step end-to-end:
 1. Creates the Kind cluster (if it does not already exist)
 2. Builds the Space Taco container image locally with Docker
 3. Loads the image directly into Kind (no registry push needed)
-4. Creates the `space-taco` namespace with Pod Security Standards enforced
+4. Creates the `space-taco` namespace with Pod Security Standards enforced and `istio-injection=enabled`
 5. Installs [Kyverno](https://kyverno.io/) for policy enforcement
-6. Installs Flux CRDs (source-controller + helm-controller only)
-7. Deploys the Space Taco Helm chart with the locally built image
+6. Installs [Istio](https://istio.io/) — `base`, `istiod`, the `istio-cni` plugin, and the ingress gateway (NodePort 30080/30443, replacing the old NGINX ingress controller)
+7. Installs Flux CRDs (source-controller + helm-controller only)
+8. Deploys the Space Taco Helm chart with the locally built image, `istio.enabled=true`, and `blueGreen.enabled=true` (blue + green Deployments behind one Service)
 
 ### Run from the repository root
 
@@ -163,14 +166,16 @@ The Kind cluster is defined in [kind/kind-cluster.yaml](kind/kind-cluster.yaml).
 
 ## Testing the Running Application
 
-After a successful bootstrap, use these commands to exercise the app:
+After a successful bootstrap, traffic flows through the Istio ingress
+gateway rather than a plain Ingress: `localhost:8080` → Kind NodePort 30080 →
+`istio-ingressgateway` → blue/green pod. The Gateway accepts any hostname
+(`*`) in Kind, so plain `http://localhost:8080` works directly in a browser
+or curl — no `Host` header needed. The `x-taco-slot` response header shows
+which slot answered.
 
 ```bash
-# Port-forward the service to localhost:8080
-kubectl port-forward svc/space-taco -n space-taco 8080:80 &
-
 # Health check
-curl http://localhost:8080/healthz
+curl -i http://localhost:8080/healthz
 
 # Browse the galactic menu
 curl http://localhost:8080/api/v1/menu | jq .
@@ -187,6 +192,29 @@ curl -X POST http://localhost:8080/api/v1/orders \
 
 # List all orders
 curl http://localhost:8080/api/v1/orders | jq .
+```
+
+---
+
+## Blue/Green Cutover
+
+Both `space-taco-blue` and `space-taco-green` Deployments run at all times,
+behind the same Service. An Istio `VirtualService`/`DestinationRule` sends
+100% of traffic to `blueGreen.activeSlot` and 0% to the other — switching is
+instant, no cold start:
+
+```bash
+# 1. Roll out a new version to the idle "green" slot — it receives 0% of
+#    traffic until you cut over, so this is safe to do live.
+helm upgrade space-taco gitops/charts/space-taco -n space-taco \
+  --reuse-values --set blueGreen.slots.green.image.tag=<new-tag>
+
+# 2. Cut traffic over to green once it looks healthy
+helm upgrade space-taco gitops/charts/space-taco -n space-taco \
+  --reuse-values --set blueGreen.activeSlot=green
+
+# 3. Confirm the switch
+curl -i http://localhost:8080/healthz   # x-taco-slot: green
 ```
 
 ---
@@ -209,3 +237,6 @@ kind delete cluster --name space-taco
 | Helm deploy times out | Image not loaded into Kind | Re-run the script from the repo root; ensure Docker is running |
 | `kubectl` targets the wrong cluster | Wrong context active | Run `kubectl config use-context kind-space-taco` |
 | Kyverno install fails | Docker resources too low | Increase Docker Desktop memory to at least 4 GB |
+| `space-taco-*` pods rejected by Kyverno/PSS after Istio install | `istio-cni` DaemonSet not yet Ready on the node, so injection fell back to the privileged init-container path | `kubectl get pods -n istio-system -l k8s-app=istio-cni-node`; wait for it to be `Running`, then re-run the Helm upgrade |
+| `curl http://localhost:8080/...` returns 404 from the gateway | Gateway/VirtualService weren't deployed with `istio.gateway.hosts[0]=*`, or are stuck on an old value | `kubectl get gateway,virtualservice -n space-taco -o yaml \| grep -A2 hosts:` to confirm `"*"`; re-run the bootstrap script if not |
+| Istio install fails / times out | Docker resources too low, or stale `istio` Helm repo cache | Increase Docker Desktop memory; run `helm repo update istio` and re-run the bootstrap script |

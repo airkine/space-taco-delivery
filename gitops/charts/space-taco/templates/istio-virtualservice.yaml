@@ -1,0 +1,59 @@
+{{- if .Values.istio.enabled }}
+# VirtualService is what actually enforces the blue/green traffic split.
+# Bound only to our own Gateway (north-south, external traffic) — NOT the
+# special "mesh" gateway. Istio's validation webhook rejects a wildcard host
+# ("*", used in Kind so a plain browser request works without a Host header)
+# on any VirtualService bound to "mesh", since that would affect routing for
+# every hostname mesh-wide. The trade-off: in-mesh sidecar-to-sidecar calls
+# to the plain Service hostname get default (unweighted) load balancing
+# across both slots instead of honouring activeSlot — acceptable here since
+# the blue/green feature is about external traffic.
+#
+# Plain Ingress -> Service traffic never reaches this rule either: kube-proxy
+# resolves that hop before Envoy is involved, so it always round-robins
+# across every pod regardless of "version". Only requests entering through
+# the Istio Gateway above get weighted blue/green routing.
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: {{ include "space-taco.fullname" . }}
+  labels:
+    {{- include "space-taco.labels" . | nindent 4 }}
+spec:
+  hosts:
+    {{- range .Values.istio.gateway.hosts }}
+    - {{ . | quote }}
+    {{- end }}
+  gateways:
+    - {{ include "space-taco.fullname" . }}
+  http:
+    {{- if .Values.blueGreen.enabled }}
+    {{- $active := .Values.blueGreen.activeSlot }}
+    {{- $standby := ternary "green" "blue" (eq $active "blue") }}
+    # x-taco-slot response header lets you see which slot answered a request
+    # (e.g. `curl -i`) without needing any app-side version endpoint.
+    - route:
+        - destination:
+            host: {{ include "space-taco.fullname" . }}
+            subset: {{ $active }}
+          weight: 100
+          headers:
+            response:
+              set:
+                x-taco-slot: {{ $active }}
+        - destination:
+            host: {{ include "space-taco.fullname" . }}
+            subset: {{ $standby }}
+          weight: 0
+          headers:
+            response:
+              set:
+                x-taco-slot: {{ $standby }}
+    {{- else }}
+    - route:
+        - destination:
+            host: {{ include "space-taco.fullname" . }}
+            port:
+              number: {{ .Values.service.port }}
+    {{- end }}
+{{- end }}
