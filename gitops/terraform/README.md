@@ -285,6 +285,32 @@ On first apply (in order):
 4. `terraform-infra-apply` runs `flux_bootstrap_git` — installs Flux controllers into the cluster and pushes manifests to `gitops/flux/flux-system/` (**this creates a new commit on `main`**)
 5. Flux discovers `gitops/flux/apps/` and reconciles Kyverno then the space-taco HelmRelease
 
+### Bootstrapping from a truly empty state (disaster recovery)
+
+Step 4 above only works if `azurerm_kubernetes_cluster.this` already exists
+in state by the time `flux_bootstrap_git` is planned — the `flux` provider
+block in `provider.tf` reads `kube_config` straight off that resource, and
+that value is unknown until the cluster is actually created. If the state is
+completely empty (e.g. the resource group was deleted out-of-band and
+Terraform is rebuilding from zero), a single `terraform plan` can't succeed:
+it fails with `Error: Kubernetes Client — invalid configuration` the moment
+it reaches `flux_bootstrap_git`.
+
+`terraform-infra-plan`'s "Terraform Plan" step detects exactly this failure
+and automatically falls back to a `-target` plan that creates everything
+*except* `flux_bootstrap_git` (resource group, cluster, node pool, public
+IP, role assignment, the Istio CNI-chaining `null_resource`). The PR
+comment is flagged with a "⚠️ Bootstrap mode" note when this happens. Once
+that plan is reviewed and applied, the cluster exists with a concrete
+`kube_config` — **re-run the workflow** (push again, or `workflow_dispatch`)
+and the second pass will plan/apply `flux_bootstrap_git` normally, no
+special-casing needed.
+
+This never showed up before because `flux.tf` (commit `cb34380`) was only
+ever introduced onto a state where the cluster already existed — this repo
+had never actually planned the cluster and Flux together from a genuinely
+empty state until a manual out-of-band deletion forced it.
+
 After apply, verify:
 
 ```bash
