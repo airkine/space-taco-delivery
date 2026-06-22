@@ -145,26 +145,26 @@ AKS automatically labels every user-pool node with `kubernetes.azure.com/mode: u
 |-----------|-------------|
 | AKS control plane (Free tier) | $0 |
 | 1× system node `Standard_B2pls_v2` (ARM64, 2 vCPU / 4 GiB) | ~$17 |
-| 2× user node `Standard_B2pls_v2` (ARM64, 2 vCPU / 4 GiB) | ~$34 |
-| OS disks (3× 30 GB managed) | ~$6 |
+| 3× user node `Standard_B2pls_v2` (ARM64, 2 vCPU / 4 GiB) | ~$51 |
+| OS disks (4× 30 GB managed) | ~$8 |
 | Standard Load Balancer (egress) | ~$18 |
 | Istio external ingress gateway public IP (Standard) | ~$4 |
 | Terraform state storage (existing) | ~$1 |
-| **Total** | **~$80/month** |
+| **Total** | **~$99/month** |
 
-The user/apps pool runs 2 nodes, not 1: on a single 2-vCPU node, Kyverno
-3.8.1's 4 controller deployments + 2 `istiod` replicas + Flux's 4
-controllers exceed available CPU *requests*, so `kyverno-reports-controller`
-gets stuck `FailedScheduling (Insufficient cpu)` and every Helm install
-remediation retry fails the same way. A second node gives the scheduler
-somewhere else to place the overflow — see the AKS troubleshooting table
-below.
+The user/apps pool runs 3 nodes, not 1: Kyverno 3.8.1's 4 controller
+deployments + 2 `istiod` replicas + Flux's 4 controllers need more combined
+CPU/memory *request* headroom than a single 2-vCPU/4GiB node has. 1 node
+left zero CPU headroom (`FailedScheduling: Insufficient cpu`); 2 nodes
+shifted the same failure to memory (the second node hit 99% memory
+requests). 3 nodes gives enough combined headroom across the pool — see the
+AKS troubleshooting table below.
 
 ### Swap to x86 if ARM is unavailable
 
 ```hcl
 # infra/terraform.tfvars
-aks_node_vm_size = "Standard_B2s"   # ~$35/month per node → ~$140/month total (1 system + 2 user)
+aks_node_vm_size = "Standard_B2s"   # ~$35/month per node → ~$140/month total (1 system + 3 user)
 ```
 
 ### Cut costs further: stop the cluster when not in use
@@ -362,7 +362,7 @@ curl -H "Host: taco-delivery.autoaaron.xyz" "http://${GATEWAY_IP}/healthz"
 | `space-taco` pods stuck with the `istio-init` container rejected by Kyverno (`NET_ADMIN`/`NET_RAW`/`runAsUser=0` forbidden) | CNI chaining wasn't applied — `null_resource.istio_cni_chaining`'s `local-exec` either didn't run (no `az` CLI session) or ran before the add-on finished installing | Run manually: `az aks mesh proxy-redirection-mechanism --resource-group rg-space-taco-dev --name aks-space-taco-dev --mechanism CNIChaining`, then `kubectl rollout restart deployment -n space-taco` |
 | Sidecar not injected into `space-taco` pods at all | Namespace label `istio.io/rev` doesn't match the revision actually installed (e.g. `locals.tf`'s `istio_revision` was bumped without checking `az aks mesh get-revisions` first) | Check `az aks show ... --query 'serviceMeshProfile.istio.revisions'` and make sure `gitops/flux/apps/namespace.yaml`'s `istio.io/rev` label matches exactly |
 | `null_resource.istio_cni_chaining`'s `az aks mesh` call fails with `AKSOperationPreempted` | The CNI-chaining call only depended on the cluster, so Terraform ran it in parallel with `azurerm_kubernetes_cluster_node_pool.apps`'s creation — AKS only allows one control-plane operation in flight per cluster | Fixed: `istio.tf` now also `depends_on` the node pool, forcing the call to run strictly after it. |
-| Kyverno HelmRelease stuck `InstallFailed`, retries all fail the same way; `kubectl get events -n kyverno` shows `FailedScheduling: Insufficient cpu` | `aks_user_node_count = 1` left no CPU request headroom on a single 2-vCPU node once Kyverno's 4 controller deployments stack on top of 2 `istiod` replicas and Flux's 4 controllers | Fixed: bumped `aks_user_node_count` to `2` in `terraform.tfvars`. Check `kubectl describe nodes \| grep -A5 "Allocated resources"` to confirm headroom before assuming a config bug. |
+| Kyverno HelmRelease stuck `InstallFailed`/`Stalled (RetriesExceeded)`; `kubectl get events -n kyverno` shows `FailedScheduling: Insufficient cpu` or `Insufficient memory` | `aks_user_node_count` too low for Kyverno's 4 controller deployments + 2 `istiod` replicas + Flux's 4 controllers on small `Standard_B2pls_v2` nodes — 1 node ran out of CPU requests, 2 nodes shifted the same failure to memory | Fixed: bumped `aks_user_node_count` to `3`. Check `kubectl describe nodes \| grep -A5 "Allocated resources"` to confirm headroom before assuming a config bug. If `Stalled (RetriesExceeded)`, a capacity fix alone won't restart it — suspend/resume the HelmRelease (`kubectl patch helmrelease kyverno -n kyverno --type=merge -p '{"spec":{"suspend":true}}'` then `false`) to reset the retry counter; if the prior install never succeeded even once, also delete its `sh.helm.release.v1.kyverno.v*` secrets in the `kyverno` namespace first so Flux treats it as a fresh install instead of an upgrade with `MissingRollbackTarget`. |
 
 ## Destroying infrastructure
 
