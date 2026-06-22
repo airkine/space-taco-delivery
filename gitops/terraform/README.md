@@ -145,18 +145,26 @@ AKS automatically labels every user-pool node with `kubernetes.azure.com/mode: u
 |-----------|-------------|
 | AKS control plane (Free tier) | $0 |
 | 1× system node `Standard_B2pls_v2` (ARM64, 2 vCPU / 4 GiB) | ~$17 |
-| 1× user node `Standard_B2pls_v2` (ARM64, 2 vCPU / 4 GiB) | ~$17 |
-| OS disks (2× 30 GB managed) | ~$4 |
+| 2× user node `Standard_B2pls_v2` (ARM64, 2 vCPU / 4 GiB) | ~$34 |
+| OS disks (3× 30 GB managed) | ~$6 |
 | Standard Load Balancer (egress) | ~$18 |
 | Istio external ingress gateway public IP (Standard) | ~$4 |
 | Terraform state storage (existing) | ~$1 |
-| **Total** | **~$61/month** |
+| **Total** | **~$80/month** |
+
+The user/apps pool runs 2 nodes, not 1: on a single 2-vCPU node, Kyverno
+3.8.1's 4 controller deployments + 2 `istiod` replicas + Flux's 4
+controllers exceed available CPU *requests*, so `kyverno-reports-controller`
+gets stuck `FailedScheduling (Insufficient cpu)` and every Helm install
+remediation retry fails the same way. A second node gives the scheduler
+somewhere else to place the overflow — see the AKS troubleshooting table
+below.
 
 ### Swap to x86 if ARM is unavailable
 
 ```hcl
 # infra/terraform.tfvars
-aks_node_vm_size = "Standard_B2s"   # ~$35/month per node → ~$88/month total
+aks_node_vm_size = "Standard_B2s"   # ~$35/month per node → ~$140/month total (1 system + 2 user)
 ```
 
 ### Cut costs further: stop the cluster when not in use
@@ -353,6 +361,8 @@ curl -H "Host: taco-delivery.autoaaron.xyz" "http://${GATEWAY_IP}/healthz"
 | `terraform destroy` deleted the GitHub repository | `github_repository` lived in the same state as the AKS cluster, so a destroy run against the combined state removed both | Fixed: split into `github/` and `infra/` modules with separate state files; the Terraform Destroy workflow's `working-directory` is pinned to `gitops/terraform/infra` and can never reach the repo's state. See "Why two states" above. |
 | `space-taco` pods stuck with the `istio-init` container rejected by Kyverno (`NET_ADMIN`/`NET_RAW`/`runAsUser=0` forbidden) | CNI chaining wasn't applied — `null_resource.istio_cni_chaining`'s `local-exec` either didn't run (no `az` CLI session) or ran before the add-on finished installing | Run manually: `az aks mesh proxy-redirection-mechanism --resource-group rg-space-taco-dev --name aks-space-taco-dev --mechanism CNIChaining`, then `kubectl rollout restart deployment -n space-taco` |
 | Sidecar not injected into `space-taco` pods at all | Namespace label `istio.io/rev` doesn't match the revision actually installed (e.g. `locals.tf`'s `istio_revision` was bumped without checking `az aks mesh get-revisions` first) | Check `az aks show ... --query 'serviceMeshProfile.istio.revisions'` and make sure `gitops/flux/apps/namespace.yaml`'s `istio.io/rev` label matches exactly |
+| `null_resource.istio_cni_chaining`'s `az aks mesh` call fails with `AKSOperationPreempted` | The CNI-chaining call only depended on the cluster, so Terraform ran it in parallel with `azurerm_kubernetes_cluster_node_pool.apps`'s creation — AKS only allows one control-plane operation in flight per cluster | Fixed: `istio.tf` now also `depends_on` the node pool, forcing the call to run strictly after it. |
+| Kyverno HelmRelease stuck `InstallFailed`, retries all fail the same way; `kubectl get events -n kyverno` shows `FailedScheduling: Insufficient cpu` | `aks_user_node_count = 1` left no CPU request headroom on a single 2-vCPU node once Kyverno's 4 controller deployments stack on top of 2 `istiod` replicas and Flux's 4 controllers | Fixed: bumped `aks_user_node_count` to `2` in `terraform.tfvars`. Check `kubectl describe nodes \| grep -A5 "Allocated resources"` to confirm headroom before assuming a config bug. |
 
 ## Destroying infrastructure
 
