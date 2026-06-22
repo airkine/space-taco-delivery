@@ -1,0 +1,41 @@
+---
+# Flux Kustomization that reconciles everything in gitops/flux/cert-manager/.
+# Lives here (gitops/flux/) rather than inside cert-manager/ for the same
+# reason kustomization-apps.yaml does — see that file's comment.
+#
+# Split out as its OWN Kustomization (sibling to "apps", not nested inside
+# it) rather than folded into apps/: the ClusterIssuer/Certificate objects in
+# gitops/flux/cert-manager-issuers/ are Custom Resources that don't exist in
+# the API server until cert-manager's CRDs are actually installed by the
+# HelmRelease below. A Flux Kustomization can dependsOn another Kustomization
+# and gate on its healthChecks (see kustomization-cert-manager-issuers.yaml);
+# it can't gate on a HelmRelease that's merely a sibling resource inside the
+# same Kustomization's own resource list. Keeping cert-manager itself in its
+# own Kustomization is what makes that dependency expressible at all.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: cert-manager
+  namespace: flux-system
+spec:
+  interval: 10m
+
+  # Path inside the repo that Flux watches for changes.
+  path: ./gitops/flux/cert-manager
+
+  # The GitRepository source created by flux_bootstrap_git (flux-system/flux-system).
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+
+  prune: true   # Delete resources removed from Git (keeps cluster in sync).
+  wait: true    # Wait for all resources in this Kustomization to become Ready
+                # before marking the Kustomization itself as Ready — this is
+                # exactly the signal kustomization-cert-manager-issuers.yaml's
+                # dependsOn waits on.
+
+  healthChecks:
+    - apiVersion: helm.toolkit.fluxcd.io/v2
+      kind: HelmRelease
+      name: cert-manager
+      namespace: cert-manager

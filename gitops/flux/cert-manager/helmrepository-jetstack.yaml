@@ -1,0 +1,11 @@
+---
+# cert-manager HelmRepository — fetches from the official Jetstack chart repo
+# (the cert-manager project's own maintainers, not a third party).
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: jetstack
+  namespace: flux-system
+spec:
+  url: https://charts.jetstack.io
+  interval: 60m # Chart doesn't change often; relax polling interval.

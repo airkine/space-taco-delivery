@@ -130,6 +130,55 @@ Managed as YAML; Flux reconciles them after bootstrap:
 | `helmrelease-space-taco.yaml` | HelmRelease for the app — latest chart from GHCR, single replica, no Redis. Same `retries`-under-`remediation` convention applies. |
 | `kustomization.yaml` | Flux Kustomization wiring everything together, Kyverno health-checked before space-taco |
 
+### TLS — cert-manager + Let's Encrypt (`gitops/flux/cert-manager/`, `gitops/flux/cert-manager-issuers/`)
+
+Both public entry points (the Web App Routing Ingress and the Istio Gateway)
+terminate TLS with a free, auto-renewing Let's Encrypt certificate via
+[cert-manager](https://cert-manager.io/), rather than an Azure-native option.
+Why: Azure's "native" TLS path for Web App Routing (Key Vault-backed
+certs via the `kubernetes.azure.com/tls-cert-keyvault-uri` annotation)
+doesn't generate a certificate — Key Vault only *stores* one, so you'd still
+need a cert from a paid CA via Key Vault's partner integration, or you'd be
+manually importing a Let's Encrypt cert anyway, which is cert-manager's job
+with extra steps. Azure Front Door/Application Gateway managed certificates
+are the other "native" option, but both add $35–125+/month of infrastructure
+this dev cluster doesn't otherwise need. cert-manager's only cost is the
+small compute footprint of its own controller/webhook/cainjector pods,
+running on nodes this cluster already pays for.
+
+Split into two Flux Kustomizations (siblings of `apps`, wired in
+`gitops/flux/kustomization.yaml`), not folded into one, because the
+ClusterIssuer/Certificate objects in the second are Custom Resources that
+don't exist until the first's HelmRelease has installed cert-manager's CRDs:
+
+| Kustomization / path | Contents |
+|----------|---------|
+| `cert-manager` → `gitops/flux/cert-manager/` | `namespace.yaml`, `helmrepository-jetstack.yaml`, `helmrelease-cert-manager.yaml` — the cert-manager controller/webhook/cainjector, with `crds.enabled: true` and trimmed resource requests (see "Cost estimate" below) |
+| `cert-manager-issuers` → `gitops/flux/cert-manager-issuers/` (`dependsOn: cert-manager`) | `clusterissuer-letsencrypt-staging.yaml`, `clusterissuer-letsencrypt-prod.yaml`, `certificate-istio-gateway-tls.yaml` |
+
+Both ClusterIssuers solve the ACME HTTP-01 challenge through the **same**
+Web App Routing ingress class (`webapprouting.kubernetes.azure.com`) — the
+only controller that the `taco-delivery.autoaaron.xyz` DNS record (managed
+by external-dns) actually resolves to. This is also how the Istio Gateway's
+certificate gets validated, even though the Istio gateway itself is reached
+by raw IP + Host header, not DNS (see root `README.md`'s "Blue/Green with
+Istio") — ACME only validates domain ownership over HTTP, independent of
+which service the resulting certificate is later mounted into.
+
+**Currently pointed at `letsencrypt-staging`** (no rate limits, untrusted
+root — expected browser warning) while the chain is being validated end to
+end. Promote to `letsencrypt-prod` by changing two places once staging
+issues cleanly:
+
+- `gitops/flux/apps/helmrelease-space-taco.yaml`'s `ingress.annotations["cert-manager.io/cluster-issuer"]`
+- `gitops/flux/cert-manager-issuers/certificate-istio-gateway-tls.yaml`'s `spec.issuerRef.name`
+
+The Istio Gateway's certificate is a standalone `Certificate` object (not
+the Ingress-annotation shortcut) in the **`aks-istio-ingress`** namespace —
+Istio's gateway pods read TLS secrets via SDS from their own namespace, not
+the namespace the `Gateway` resource happens to live in. See
+`certificate-istio-gateway-tls.yaml`'s comment for the full reasoning.
+
 ## Node pool architecture
 
 Two node pools keep AKS infrastructure and application workloads on separate nodes:
@@ -152,6 +201,8 @@ AKS automatically labels every user-pool node with `kubernetes.azure.com/mode: u
 | Standard Load Balancer (egress) | ~$18 |
 | Istio external ingress gateway public IP (Standard) | ~$4 |
 | Terraform state storage (existing) | ~$1 |
+| cert-manager (controller/webhook/cainjector pods) | $0 — runs on existing nodes |
+| Let's Encrypt certificates (Web App Routing + Istio Gateway) | $0 — free, auto-renewing |
 | **Total** | **~$99/month** |
 
 The user/apps pool runs 3 nodes, not 1: Kyverno 3.8.1's 4 controller
@@ -365,6 +416,8 @@ curl -H "Host: taco-delivery.autoaaron.xyz" "http://${GATEWAY_IP}/healthz"
 | Sidecar not injected into `space-taco` pods at all | Namespace label `istio.io/rev` doesn't match the revision actually installed (e.g. `locals.tf`'s `istio_revision` was bumped without checking `az aks mesh get-revisions` first) | Check `az aks show ... --query 'serviceMeshProfile.istio.revisions'` and make sure `gitops/flux/apps/namespace.yaml`'s `istio.io/rev` label matches exactly |
 | `null_resource.istio_cni_chaining`'s `az aks mesh` call fails with `AKSOperationPreempted` | The CNI-chaining call only depended on the cluster, so Terraform ran it in parallel with `azurerm_kubernetes_cluster_node_pool.apps`'s creation — AKS only allows one control-plane operation in flight per cluster | Fixed: `istio.tf` now also `depends_on` the node pool, forcing the call to run strictly after it. |
 | Kyverno HelmRelease stuck `InstallFailed`/`Stalled (RetriesExceeded)`; `kubectl get events -n kyverno` shows `FailedScheduling: Insufficient cpu` or `Insufficient memory` | Kyverno's 4 controller deployments at chart-default resource *requests* (~410m CPU / ~384Mi memory total) + 2 `istiod` replicas + Flux's 4 controllers + per-node AKS/Istio daemonsets left no scheduling headroom on small `Standard_B2pls_v2` nodes. Growing `aks_user_node_count` from 1→2→3 kept shifting which single pod was unschedulable (CPU, then memory, then one pod short again) instead of resolving it — each additional tiny node also adds its own daemonset overhead, so node count alone has diminishing returns | Fixed at the root cause: `kustomization-kyverno.yaml`'s `values` now overrides each controller's resource *requests* down to 5-20m CPU / 32-64Mi memory (limits untouched — this only lowers what the scheduler reserves up front, not the usable ceiling). Check `kubectl describe nodes \| grep -A5 "Allocated resources"` before assuming a node-count fix will help. If the HelmRelease is `Stalled (RetriesExceeded)`, a values/capacity fix alone won't restart it — suspend/resume (`kubectl patch helmrelease kyverno -n kyverno --type=merge -p '{"spec":{"suspend":true}}'` then `false`) to reset the retry counter; if the prior install never succeeded even once, also delete its `sh.helm.release.v1.kyverno.v*` secrets in the `kyverno` namespace first so Flux treats it as a fresh install instead of an upgrade with `MissingRollbackTarget`. |
+| `Certificate` stuck `Pending`; `kubectl describe` shows a `cm-acme-http-solver-*` pod `Forbidden` by admission | The ACME HTTP-01 self-check pod for the Ingress-driven certificate is created in the `space-taco` namespace (same namespace as the Certificate/Ingress that requested it — cert-manager always does this, not configurable), making it subject to `space-taco-pod-security`'s rules (`gitops/charts/space-taco/templates/kyverno-policies.yaml`), which match every Pod in that namespace unconditionally. cert-manager ≥1.16 (pinned in `helmrelease-cert-manager.yaml`) already hardens the solver pod's default `securityContext` to satisfy this (`cert-manager/cert-manager#6462`), so this shouldn't trigger — but if a future chart bump or custom `podTemplate` regresses it | Add an `exclude` block (matching label `acme.cert-manager.io/http01-solver: "true"`) to each rule in `space-taco-pod-security`, the same narrowly-scoped-exception pattern used for the Istio CNI-chaining fix above — don't disable the policy outright |
+| `ClusterIssuer`/`Certificate` exists but no `Secret` appears after several minutes | `kubectl describe challenge -A` — almost always either (a) DNS for the requested hostname doesn't point at the Web App Routing ingress IP yet (external-dns lag, or a stale record), or (b) the temporary self-check `Ingress` cert-manager creates isn't using `ingressClassName: webapprouting.kubernetes.azure.com` because a `ClusterIssuer` was hand-edited without it | Confirm `dig taco-delivery.autoaaron.xyz` resolves to the same IP as `kubectl get svc -n app-routing-system` (or wherever Web App Routing's controller Service lives), and that both ClusterIssuers in `gitops/flux/cert-manager-issuers/` still set `solvers[0].http01.ingress.ingressClassName` |
 
 ## Destroying infrastructure
 

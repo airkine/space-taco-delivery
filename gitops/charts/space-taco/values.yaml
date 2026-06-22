@@ -118,6 +118,19 @@ imageVerification:
 # this chart (and the plain Ingress path) are unaffected until they opt in.
 istio:
   enabled: false
+  tls:
+    # When true, adds an HTTPS (443) server to the Gateway alongside the
+    # existing HTTP (80) one, terminating TLS with the Secret named by
+    # credentialName below. That Secret is NOT managed by this chart — it's
+    # populated by cert-manager via
+    # gitops/flux/cert-manager-issuers/certificate-istio-gateway-tls.yaml,
+    # in the gateway pods' own namespace (aks-istio-ingress on AKS), not
+    # this release's namespace. Leave false for local/Kind, where there's no
+    # cert-manager and no public DNS to satisfy an ACME challenge anyway.
+    enabled: false
+    # Must match the Certificate's spec.secretName in
+    # certificate-istio-gateway-tls.yaml. Required when tls.enabled=true.
+    credentialName: ""
   gateway:
     # Label selector matching the Istio ingress gateway pods (the default
     # label applied by the `istio/gateway` Helm chart's "ingress" preset).

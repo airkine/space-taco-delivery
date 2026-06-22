@@ -2,7 +2,7 @@ apiVersion: v2
 name: space-taco
 description: 🌮🚀 Intergalactic Taco Delivery Microservice
 type: application
-version: 0.2.0
+version: 0.3.0
 appVersion: "0.1.1"
 
 keywords:
@@ -26,3 +26,12 @@ annotations:
         and blue/green Deployment slots (blueGreen.enabled) switched via
         blueGreen.activeSlot. Both disabled by default; no change to existing
         single-Deployment behavior.
+    - kind: added
+      description: >-
+        TLS termination on the Istio Gateway (istio.tls.enabled +
+        istio.tls.credentialName), adding an HTTPS (443) server alongside
+        the existing HTTP (80) one. Disabled by default; no change to
+        existing behavior. The Ingress template already supported
+        spec.tls generically, so no chart change was needed for the Web App
+        Routing path's TLS — see gitops/flux/cert-manager-issuers/ for the
+        cert-manager wiring that populates both.

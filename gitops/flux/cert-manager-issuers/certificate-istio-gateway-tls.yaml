@@ -1,0 +1,32 @@
+---
+# TLS certificate for the Istio ingress gateway entry point
+# (aks-istio-ingressgateway-external). Requested explicitly via a
+# Certificate object rather than the Ingress-annotation shortcut used for
+# the Web App Routing path (gitops/flux/apps/helmrelease-space-taco.yaml's
+# ingress.annotations) — there's no Ingress here for cert-manager's
+# ingress-shim to watch, just an Istio Gateway.
+#
+# Namespace matters: Istio's gateway pods read TLS secrets via SDS from
+# their OWN namespace — aks-istio-ingress, where the AKS-managed external
+# gateway runs (see gitops/terraform/README.md "Istio service mesh add-on")
+# — not from whatever namespace the Gateway custom resource itself lives in
+# (space-taco). So this Certificate, and the Secret it produces, must be
+# created in aks-istio-ingress even though
+# gitops/charts/space-taco/templates/istio-gateway.yaml's Gateway object is
+# deployed into the space-taco namespace. credentialName below is what ties
+# the two together.
+#
+# aks-istio-ingress is pre-existing (created by the AKS-managed Istio add-on
+# itself, not by this repo's Flux config) — no namespace.yaml entry needed.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: taco-delivery-istio-tls
+  namespace: aks-istio-ingress
+spec:
+  secretName: taco-delivery-istio-tls
+  dnsNames:
+    - taco-delivery.autoaaron.xyz
+  issuerRef:
+    name: letsencrypt-staging
+    kind: ClusterIssuer

@@ -1,0 +1,24 @@
+---
+# cert-manager namespace — must exist before the HelmRelease object below is
+# applied. helm.install.createNamespace=true (set in
+# helmrelease-cert-manager.yaml) only tells helm-controller to create the
+# namespace during chart install; kustomize-controller needs the namespace
+# to already exist FIRST so it has somewhere to place the HelmRelease object
+# itself. This is the exact same gap that left the Kyverno HelmRelease stuck
+# until its namespace was pre-created here too — see
+# gitops/flux/apps/namespace.yaml and gitops/terraform/README.md's
+# troubleshooting table ("Kyverno namespace not pre-created").
+#
+# Deliberately NOT labeled policy.sigstore.dev/include or istio.io/rev:
+# cert-manager's controller/webhook/cainjector pods are cluster
+# infrastructure, not part of the space-taco application surface that
+# Kyverno's image-signature and pod-security ClusterPolicies are scoped to
+# (gitops/charts/space-taco/templates/kyverno-policies.yaml hardcodes
+# `namespaces: [space-taco]` on every rule), and they don't need an Istio
+# sidecar.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cert-manager
+  labels:
+    app.kubernetes.io/managed-by: flux

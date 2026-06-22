@@ -1,0 +1,27 @@
+---
+# Flux Kustomization that reconciles ./gitops/flux/cert-manager-issuers/ —
+# the ClusterIssuer and Certificate objects that depend on cert-manager's
+# CRDs already being registered in the cluster.
+#
+# dependsOn + the cert-manager Kustomization's wait:true/healthChecks (see
+# kustomization-cert-manager.yaml) means kustomize-controller won't even
+# attempt to apply these CRs until the cert-manager HelmRelease itself is
+# Ready — avoiding the exact "CRD not registered yet" race that hit Kyverno
+# + space-taco before dependsOn was added there too (see
+# gitops/terraform/README.md's troubleshooting table: "ClusterPolicy
+# NotFound").
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: cert-manager-issuers
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./gitops/flux/cert-manager-issuers
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  prune: true
+  wait: true
+  dependsOn:
+    - name: cert-manager
