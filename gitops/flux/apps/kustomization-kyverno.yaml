@@ -50,11 +50,45 @@ spec:
     # nodeSelector removed: the "apps" user node pool does not exist in the
     # current cluster (only system pool is provisioned), so locking pods to
     # kubernetes.azure.com/mode=user prevents scheduling entirely.
+    #
+    # Resource *requests* below are trimmed well under the chart defaults
+    # (admissionController: initContainer 10m/64Mi + container 100m/128Mi;
+    # background/cleanup/reportsController: 100m/64Mi each — ~410m CPU /
+    # 384Mi memory total). On this dev cluster's small Standard_B2pls_v2
+    # nodes (2 vCPU/4 GiB, most of it already claimed by istiod, Flux's
+    # controllers, and per-node AKS/Istio daemonsets), those defaults left
+    # kyverno-reports-controller permanently stuck FailedScheduling even
+    # after growing the apps node pool to 3 nodes — see
+    # ../../terraform/README.md's AKS troubleshooting table. Limits are
+    # left at chart defaults: this only lowers what the scheduler reserves
+    # up front, not the ceiling each container can actually use.
     admissionController:
       replicas: 1
+      initContainer:
+        resources:
+          requests:
+            cpu: 5m
+            memory: 32Mi
+      container:
+        resources:
+          requests:
+            cpu: 20m
+            memory: 64Mi
     backgroundController:
       replicas: 1
+      resources:
+        requests:
+          cpu: 20m
+          memory: 32Mi
     cleanupController:
       replicas: 1
+      resources:
+        requests:
+          cpu: 20m
+          memory: 32Mi
     reportsController:
       replicas: 1
+      resources:
+        requests:
+          cpu: 20m
+          memory: 32Mi
