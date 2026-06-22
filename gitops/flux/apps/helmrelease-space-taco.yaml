@@ -87,6 +87,21 @@ spec:
         cpu: 200m
         memory: 64Mi
 
+    # Per-pod overrides for the Istio sidecar AKS's managed mesh add-on
+    # injects into every pod in this namespace (istio.io/rev label on
+    # namespace.yaml). Istio's mesh-wide ProxyConfig default is 100m CPU /
+    # 128Mi request, 2 CPU / 1Gi limit — sized for production traffic, not
+    # a single low-traffic dev app. There's no Terraform/Helm lever to
+    # change the mesh-wide default (that lives in the AKS-managed add-on's
+    # config, not anything this repo controls), but these standard Istio
+    # annotations override it per-pod. Merges with (doesn't replace) the
+    # chart's own default podAnnotations (policy.sigstore.dev/include).
+    podAnnotations:
+      sidecar.istio.io/proxyCPU: "20m"
+      sidecar.istio.io/proxyMemory: "64Mi"
+      sidecar.istio.io/proxyCPULimit: "500m"
+      sidecar.istio.io/proxyMemoryLimit: "256Mi"
+
     service:
       type: ClusterIP
       port: 80

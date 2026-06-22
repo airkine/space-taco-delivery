@@ -116,6 +116,8 @@ available.
 
 `infra/` still needs `var.github_token` and `var.github_owner` — not to manage any `github_*` resource (there are none here), but because the `flux` provider authenticates its git push with a plain HTTP username/password (the token), and builds the clone URL from the owner.
 
+**Sidecar resource sizing.** The add-on's mesh-wide `ProxyConfig` default (100m CPU / 128Mi request, 2 CPU / 1Gi limit per sidecar) is sized for production, not this dev cluster — there's no `service_mesh_profile` field or other Terraform/Helm lever to change that default, since it lives in the AKS-managed add-on's own config. `helmrelease-space-taco.yaml`'s `podAnnotations` overrides it per-pod instead, via the standard `sidecar.istio.io/proxyCPU`/`proxyMemory`/`proxyCPULimit`/`proxyMemoryLimit` annotations (down to 20m CPU / 64Mi request, 500m CPU / 256Mi limit). `istiod` itself (500m CPU / 2Gi request × 2 replicas) has the same "can't tune it, it's managed" problem but no per-pod annotation workaround — it's the largest single resource consumer on this cluster and just has to be budgeted for.
+
 ### Flux app manifests (`gitops/flux/apps/`)
 
 Managed as YAML; Flux reconciles them after bootstrap:
