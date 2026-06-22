@@ -1,9 +1,13 @@
 {{- if .Values.istio.enabled }}
 # Istio Gateway — the mesh's north-south entry point. Selects the
 # istio-ingressgateway pods (via .Values.istio.gateway.selector) and accepts
-# plain HTTP on port 80 for the configured hostnames. TLS termination is left
-# out for now (practice/dev setup); add a "tls:" block + https server entry
-# here when moving beyond local experimentation.
+# plain HTTP on port 80 for the configured hostnames. Plain HTTP is kept
+# alongside HTTPS below (no httpsRedirect) rather than removed — this
+# Gateway never serves ACME's /.well-known/acme-challenge/ path (that's
+# solved through the separate Web App Routing ingress controller; see
+# gitops/flux/cert-manager-issuers/clusterissuer-letsencrypt-staging.yaml),
+# but local/Kind usage (istio.tls.enabled=false there) still needs plain
+# HTTP to keep working unmodified.
 apiVersion: networking.istio.io/v1
 kind: Gateway
 metadata:
@@ -22,4 +26,25 @@ spec:
         {{- range .Values.istio.gateway.hosts }}
         - {{ . | quote }}
         {{- end }}
+    {{- if .Values.istio.tls.enabled }}
+    # HTTPS server — added alongside (not instead of) the HTTP one above.
+    # mode: SIMPLE means standard server-side TLS termination (no mTLS to
+    # the client). credentialName resolves to a Secret in the GATEWAY PODS'
+    # OWN namespace (aks-istio-ingress for the AKS-managed external
+    # gateway), regardless of which namespace this Gateway object is
+    # deployed into (space-taco) — see
+    # gitops/flux/cert-manager-issuers/certificate-istio-gateway-tls.yaml,
+    # which is what creates that Secret via cert-manager.
+    - port:
+        number: 443
+        name: https
+        protocol: HTTPS
+      tls:
+        mode: SIMPLE
+        credentialName: {{ .Values.istio.tls.credentialName | required ".Values.istio.tls.credentialName is required when istio.tls.enabled=true" }}
+      hosts:
+        {{- range .Values.istio.gateway.hosts }}
+        - {{ . | quote }}
+        {{- end }}
+    {{- end }}
 {{- end }}

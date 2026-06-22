@@ -1,0 +1,25 @@
+---
+# Let's Encrypt PRODUCTION ClusterIssuer — browser-trusted certs, but rate
+# limited (5 certs per exact set of hostnames per week; 300 new ACME orders
+# per account per 3 hours). Don't point anything at this issuer until the
+# letsencrypt-staging ClusterIssuer (this file's sibling) has proven the
+# HTTP-01 chain works end to end for both consumers — see that file's
+# "Promotion to production" comment for the exact switch-over steps.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: airkine@gmail.com
+    privateKeySecretRef:
+      # Separate account key from the staging issuer — production and
+      # staging are different ACME accounts entirely, on different CAs.
+      name: letsencrypt-prod-account-key
+    solvers:
+      - http01:
+          ingress:
+            # Same Web App Routing ingress class as the staging issuer —
+            # see clusterissuer-letsencrypt-staging.yaml's comment for why.
+            ingressClassName: webapprouting.kubernetes.azure.com

@@ -114,13 +114,35 @@ spec:
     ingress:
       enabled: true
       className: "webapprouting.kubernetes.azure.com"
-      annotations: {}
+      annotations:
+        # cert-manager's "ingress-shim" watches for this annotation and
+        # automatically creates a Certificate for the host(s)/secretName
+        # below, requesting it from the named ClusterIssuer (see
+        # gitops/flux/cert-manager-issuers/clusterissuer-letsencrypt-staging.yaml).
+        # Currently pointed at STAGING — switch to "letsencrypt-prod" once
+        # `kubectl describe certificate -n space-taco taco-delivery-tls`
+        # shows a clean staging issuance (see that file's "Promotion to
+        # production" comment).
+        cert-manager.io/cluster-issuer: "letsencrypt-staging"
+        # Web App Routing's managed controller is nginx-based, so it honors
+        # standard ingress-nginx annotations. Explicit here (rather than
+        # relying on nginx's own default) so HTTP keeps working as a
+        # redirect, not a dead end, the moment this Ingress carries a tls:
+        # block below.
+        nginx.ingress.kubernetes.io/ssl-redirect: "true"
       hosts:
         - host: "taco-delivery.autoaaron.xyz"
           paths:
             - path: /
               pathType: Prefix
-      tls: []
+      tls:
+        - hosts:
+            - "taco-delivery.autoaaron.xyz"
+          # cert-manager creates/renews this Secret automatically — nothing
+          # else in this repo writes to it. ~30 days before expiry,
+          # cert-manager re-runs the ACME HTTP-01 challenge and replaces it
+          # in place; no manual rotation step.
+          secretName: taco-delivery-tls
 
     # No anti-affinity needed for a single-replica dev deploy.
     affinity: {}
@@ -134,6 +156,13 @@ spec:
     # VirtualService weighting entirely.
     istio:
       enabled: true
+      tls:
+        enabled: true
+        # Must match the Certificate's spec.secretName in
+        # gitops/flux/cert-manager-issuers/certificate-istio-gateway-tls.yaml
+        # (also currently issued via the staging ClusterIssuer — promote
+        # both together).
+        credentialName: taco-delivery-istio-tls
       gateway:
         # Pod label on the AKS add-on's external ingress gateway deployment
         # (not the chart's "istio: ingressgateway" default, which matches a

@@ -1,0 +1,52 @@
+---
+# Let's Encrypt STAGING ClusterIssuer — use this one first, and everywhere,
+# until the whole chain (DNS, HTTP-01 challenge routing, Ingress/Gateway
+# wiring) has been proven to work end to end.
+#
+# Staging has no practical rate limits, unlike production (5 certs per exact
+# hostname set per week, 300 new orders per account per 3 hours) — safe to
+# retry through misconfigurations without burning that budget. The trade-off:
+# staging-issued certs are signed by an untrusted root, so real browsers will
+# show a certificate warning. That's expected here, not a bug.
+#
+# Promotion to production: once `kubectl describe certificate -n space-taco`
+# (for the Ingress cert) and `kubectl describe certificate -n
+# aks-istio-ingress taco-delivery-istio-tls` both show a STAGING cert issued
+# cleanly, switch the two consumers below from "letsencrypt-staging" to
+# "letsencrypt-prod" and let cert-manager re-issue against the real CA:
+#   - gitops/flux/apps/helmrelease-space-taco.yaml's
+#     ingress.annotations["cert-manager.io/cluster-issuer"]
+#   - certificate-istio-gateway-tls.yaml's spec.issuerRef.name (this file's
+#     sibling)
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: airkine@gmail.com
+    privateKeySecretRef:
+      # Separate account key from the prod issuer below — staging and
+      # production are different ACME accounts entirely, on different CAs.
+      name: letsencrypt-staging-account-key
+    solvers:
+      - http01:
+          ingress:
+            # The AKS Web App Routing add-on's managed NGINX ingress class —
+            # the same one already serving taco-delivery.autoaaron.xyz
+            # (gitops/flux/apps/helmrelease-space-taco.yaml's
+            # ingress.className). ACME's HTTP-01 challenge needs the
+            # requested hostname's public DNS to resolve to a controller
+            # cert-manager can configure; external-dns
+            # (gitops/terraform/infra/aks.tf) only ever points
+            # taco-delivery.autoaaron.xyz's A record at THIS controller's
+            # IP — never at the Istio gateway's IP, which is reached by raw
+            # IP + Host header instead (see root README.md "Blue/Green with
+            # Istio"). That's fine: ACME only validates domain ownership
+            # over HTTP, independent of which service the resulting
+            # certificate is later mounted into — including the Istio
+            # Gateway cert requested by certificate-istio-gateway-tls.yaml,
+            # which is solved through this exact same Ingress controller
+            # even though it'll never actually serve traffic for that cert.
+            ingressClassName: webapprouting.kubernetes.azure.com

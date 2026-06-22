@@ -1,0 +1,102 @@
+---
+# cert-manager HelmRelease — installs the cert-manager controller, webhook,
+# and cainjector. This is what turns the ClusterIssuer/Certificate objects in
+# ../cert-manager-issuers/ into real, auto-renewed TLS secrets:
+#
+#   - For the Web App Routing Ingress (gitops/flux/apps/helmrelease-space-taco.yaml),
+#     cert-manager's "ingress-shim" watches for the
+#     cert-manager.io/cluster-issuer annotation, requests a cert from Let's
+#     Encrypt via the ACME HTTP-01 challenge, and writes the result into the
+#     Secret named in that Ingress's spec.tls[].secretName.
+#   - For the Istio Gateway, there's no Ingress for ingress-shim to watch, so
+#     a Certificate object is created explicitly instead — see
+#     ../cert-manager-issuers/certificate-istio-gateway-tls.yaml.
+#
+# Either way, renewal happens automatically ~30 days before expiry — no
+# manual re-issuance step, ever.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: cert-manager
+  namespace: cert-manager
+spec:
+  interval: 10m
+
+  chart:
+    spec:
+      chart: cert-manager
+      # >=1.16 is required for the crds.enabled value used below (older
+      # chart versions used the now-deprecated installCRDs: true boolean).
+      # 1.16+ also matters for the HTTP-01 self-check ("acmesolver") pod
+      # created automatically during certificate issuance: that pod runs in
+      # the *same* namespace as whatever Ingress/Certificate requested the
+      # cert (space-taco for the Ingress-driven cert, aks-istio-ingress for
+      # the Istio Gateway's), so for the space-taco case it's subject to the
+      # space-taco-pod-security ClusterPolicy
+      # (gitops/charts/space-taco/templates/kyverno-policies.yaml) — every
+      # Pod in that namespace must run non-root, read-only-rootfs, with no
+      # privilege escalation. cert-manager hardened the acmesolver pod's
+      # default securityContext to satisfy exactly that "restricted" Pod
+      # Security Standards profile (cert-manager/cert-manager#6462); pinning
+      # >=1.16 guarantees we're on a version that includes that fix. If a
+      # Certificate ever gets stuck Pending with a "forbidden" admission
+      # event on a cm-acme-http-solver-* pod, see
+      # gitops/terraform/README.md's troubleshooting table for the Kyverno
+      # exclude-rule fix.
+      version: ">=1.16.0 <2.0.0"
+      sourceRef:
+        kind: HelmRepository
+        name: jetstack
+        namespace: flux-system
+
+  install:
+    createNamespace: true
+    remediation:
+      # retries lives under remediation in the Flux v2 HelmRelease schema;
+      # placing it directly under install/upgrade is a schema validation
+      # error that blocks the entire Kustomization — see
+      # gitops/terraform/README.md's troubleshooting table.
+      retries: 3
+
+  upgrade:
+    remediation:
+      retries: 3
+      remediateLastFailure: true
+
+  values:
+    # Installs the Certificate/ClusterIssuer/Issuer/Order/Challenge CRDs as
+    # part of this release, so uninstalling the release cleans them up too.
+    # Without this, the CRDs would need a separate manual `kubectl apply`
+    # before any ClusterIssuer/Certificate object in
+    # ../cert-manager-issuers/ could even be created.
+    crds:
+      enabled: true
+
+    # Single replica each — this is a dev cluster issuing a handful of
+    # certs for one hostname, not a multi-tenant production CA proxy. No HA
+    # needed.
+    replicaCount: 1
+
+    # Resource *requests* set explicitly and kept small. The upstream chart
+    # ships with NO default requests/limits at all, which sounds generous
+    # but is exactly the trap that caused the Kyverno CPU-starvation
+    # incident (gitops/terraform/README.md's troubleshooting table): several
+    # "free" (zero-request) workloads stacking up until their *actual* usage
+    # starved whatever else landed on the same small Standard_B2pls_v2 node.
+    # Explicit small requests keep the scheduler honest without capping what
+    # the controller can burst to under load (no limits set, same trade-off
+    # Kyverno's fix made).
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+    webhook:
+      resources:
+        requests:
+          cpu: 10m
+          memory: 32Mi
+    cainjector:
+      resources:
+        requests:
+          cpu: 10m
+          memory: 32Mi

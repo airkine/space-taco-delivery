@@ -86,10 +86,17 @@ requests routed through Istio's Envoy proxy honor the blue/green weight; see
 │               ├── deployment.yaml          # Single Deployment, or blue+green pair
 │               ├── service.yaml
 │               ├── serviceaccount.yaml
+│               ├── ingress.yaml             # ingress.enabled — Web App Routing on AKS
 │               ├── kyverno-policies.yaml    # Image signing + pod sec
-│               ├── istio-gateway.yaml       # istio.enabled
+│               ├── istio-gateway.yaml       # istio.enabled; +HTTPS server when istio.tls.enabled
 │               ├── istio-virtualservice.yaml # istio.enabled (blue/green weighting)
 │               └── istio-destinationrule.yaml # istio.enabled + blueGreen.enabled
+│
+│   ├── flux/
+│   │   ├── apps/                       # space-taco + Kyverno HelmReleases
+│   │   ├── cert-manager/               # cert-manager controller/webhook/cainjector
+│   │   └── cert-manager-issuers/       # Let's Encrypt ClusterIssuers + Istio Gateway Certificate
+│       # See gitops/terraform/README.md "TLS — cert-manager + Let's Encrypt"
 │
 ├── deploy/kind/
 │   ├── kind-cluster.yaml          # 3-node local cluster config
@@ -213,6 +220,27 @@ Helm install used in Kind (see
 — find the gateway's external IP with `kubectl get svc
 aks-istio-ingressgateway-external -n aks-istio-ingress` and curl it with a
 `Host: taco-delivery.autoaaron.xyz` header the same way.
+
+### TLS on AKS
+
+Both AKS entry points terminate HTTPS with a free Let's Encrypt certificate,
+issued and auto-renewed by [cert-manager](https://cert-manager.io/) — see
+[`gitops/terraform/README.md`](gitops/terraform/README.md#tls--cert-manager--lets-encrypt)
+for the full picture (why Let's Encrypt over an Azure-native option, how the
+two Flux Kustomizations in `gitops/flux/cert-manager*` are ordered, and the
+staging→production promotion steps).
+
+```bash
+# Web App Routing Ingress
+curl https://taco-delivery.autoaaron.xyz/healthz
+
+# Istio Gateway (reached by IP + Host header, same as the plain-HTTP example above)
+curl -k -H "Host: taco-delivery.autoaaron.xyz" "https://${GATEWAY_IP}/healthz"
+```
+
+Currently issued via the **staging** ClusterIssuer while the chain is being
+validated end to end — expect an untrusted-certificate warning (hence `-k`
+above) until it's promoted to `letsencrypt-prod`.
 
 ## GitHub Repo Bootstrap (Terraform)
 
