@@ -165,13 +165,16 @@ by raw IP + Host header, not DNS (see root `README.md`'s "Blue/Green with
 Istio") — ACME only validates domain ownership over HTTP, independent of
 which service the resulting certificate is later mounted into.
 
-**Currently pointed at `letsencrypt-staging`** (no rate limits, untrusted
-root — expected browser warning) while the chain is being validated end to
-end. Promote to `letsencrypt-prod` by changing two places once staging
-issues cleanly:
+**Promoted to `letsencrypt-prod`** as of 2026-06-22, after `letsencrypt-staging`
+(no rate limits, untrusted root) proved the HTTP-01 chain end to end on both
+entry points. The two places that were switched, in case a future hostname
+needs the same staging-first treatment:
 
 - `gitops/flux/apps/helmrelease-space-taco.yaml`'s `ingress.annotations["cert-manager.io/cluster-issuer"]`
 - `gitops/flux/cert-manager-issuers/certificate-istio-gateway-tls.yaml`'s `spec.issuerRef.name`
+
+The staging `ClusterIssuer` is left in place (not deleted) as the fastest
+rollback path if production issuance ever breaks.
 
 The Istio Gateway's certificate is a standalone `Certificate` object (not
 the Ingress-annotation shortcut) in the **`aks-istio-ingress`** namespace —

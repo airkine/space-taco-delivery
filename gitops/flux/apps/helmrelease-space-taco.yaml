@@ -118,12 +118,12 @@ spec:
         # cert-manager's "ingress-shim" watches for this annotation and
         # automatically creates a Certificate for the host(s)/secretName
         # below, requesting it from the named ClusterIssuer (see
-        # gitops/flux/cert-manager-issuers/clusterissuer-letsencrypt-staging.yaml).
-        # Currently pointed at STAGING — switch to "letsencrypt-prod" once
-        # `kubectl describe certificate -n space-taco taco-delivery-tls`
-        # shows a clean staging issuance (see that file's "Promotion to
-        # production" comment).
-        cert-manager.io/cluster-issuer: "letsencrypt-staging"
+        # gitops/flux/cert-manager-issuers/clusterissuer-letsencrypt-prod.yaml).
+        # Promoted from letsencrypt-staging after `kubectl describe
+        # certificate -n space-taco taco-delivery-tls` showed a clean
+        # staging issuance — see clusterissuer-letsencrypt-staging.yaml's
+        # "Promotion to production" comment for the reasoning.
+        cert-manager.io/cluster-issuer: "letsencrypt-prod"
         # Web App Routing's managed controller is nginx-based, so it honors
         # standard ingress-nginx annotations. Explicit here (rather than
         # relying on nginx's own default) so HTTP keeps working as a
@@ -160,8 +160,7 @@ spec:
         enabled: true
         # Must match the Certificate's spec.secretName in
         # gitops/flux/cert-manager-issuers/certificate-istio-gateway-tls.yaml
-        # (also currently issued via the staging ClusterIssuer — promote
-        # both together).
+        # (promoted to letsencrypt-prod together with the Ingress above).
         credentialName: taco-delivery-istio-tls
       gateway:
         # Pod label on the AKS add-on's external ingress gateway deployment

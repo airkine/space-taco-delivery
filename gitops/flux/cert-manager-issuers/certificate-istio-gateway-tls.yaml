@@ -18,6 +18,10 @@
 #
 # aks-istio-ingress is pre-existing (created by the AKS-managed Istio add-on
 # itself, not by this repo's Flux config) — no namespace.yaml entry needed.
+#
+# Promoted to letsencrypt-prod after the staging-issued cert came back
+# Ready=True end to end — see clusterissuer-letsencrypt-staging.yaml's
+# "Promotion to production" comment.
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
@@ -28,5 +32,5 @@ spec:
   dnsNames:
     - taco-delivery.autoaaron.xyz
   issuerRef:
-    name: letsencrypt-staging
+    name: letsencrypt-prod
     kind: ClusterIssuer
