@@ -26,6 +26,10 @@ jobs:
 
       - name: Set up Helm
         uses: azure/setup-helm@v4
+        with:
+          # Pinned, not "latest" — see the publish job's "Set up Helm" step
+          # for why letting this float is what broke chart publishing.
+          version: "v3.18.6"
 
       - name: Lint chart
         run: helm lint ${{ env.CHART_PATH }}
@@ -45,6 +49,19 @@ jobs:
 
       - name: Set up Helm
         uses: azure/setup-helm@v4
+        with:
+          # Pinned, NOT "latest". azure/setup-helm@v4's unpinned default
+          # silently installed Helm v4.2.2 here, and `helm push` to GHCR
+          # under Helm v4 fails with a registry-specific bug: it POSTs to
+          # ghcr.io's token endpoint with the wrong content-type and gets
+          # rejected with "405: unsupported: The operation is unsupported"
+          # (helm/helm#31223 — Docker Hub pushes are unaffected, only GHCR).
+          # That 405 was never visible in this workflow's own logs because
+          # of the now-fixed `set -e` bug below — it just looked like a
+          # bare "exit code 1". v3.18.6 is the last release confirmed
+          # unaffected; there is nothing v4-specific that this workflow
+          # needs, so pin here rather than chase v4 patch releases.
+          version: "v3.18.6"
 
       # docker/login-action writes credentials to ~/.docker/config.json, which is
       # the shared credential store used by both Helm (OCI) and Cosign. Using
@@ -72,11 +89,28 @@ jobs:
         run: |
           CHART_VERSION=$(helm show chart ${{ env.CHART_PATH }} | grep '^version:' | awk '{print $2}')
 
-          # Capture full push output so we can parse the immutable digest.
-          # helm push prints two lines: "Pushed: <ref>" and "Digest: sha256:<hash>"
+          # Capture full push output so we can parse the immutable digest —
+          # helm push prints two lines: "Pushed: <ref>" and "Digest: sha256:<hash>".
+          #
+          # set +e/-e around the call (and checking $? explicitly) is
+          # deliberate, not optional: this script runs with `bash -e`, and
+          # `PUSH_OUTPUT=$(helm push ... 2>&1)` propagates helm's exit code to
+          # the assignment itself. Under -e that aborts the script on the
+          # very next line — before "echo ${PUSH_OUTPUT}" ever runs — so a
+          # failure prints NOTHING but "Process completed with exit code 1"
+          # and the actual error (e.g. the GHCR-specific Helm v4 bug this
+          # job's "Set up Helm" step is now pinned against) is silently
+          # discarded. That exact blind failure is what happened here.
+          set +e
           PUSH_OUTPUT=$(helm push ${{ steps.package.outputs.chart_pkg }} \
             oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/space-taco-delivery/charts 2>&1)
+          PUSH_STATUS=$?
+          set -e
           echo "${PUSH_OUTPUT}"
+          if [ ${PUSH_STATUS} -ne 0 ]; then
+            echo "::error::helm push failed (exit ${PUSH_STATUS}) — see output above"
+            exit ${PUSH_STATUS}
+          fi
 
           # Extract the digest — we sign by digest, not by mutable tag, so the signature
           # stays valid even if the tag is later repointed.
