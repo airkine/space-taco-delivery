@@ -113,6 +113,33 @@ jobs:
       - name: Terraform fmt check
         run: terraform fmt -check -recursive
 
+      # ---------------------------------------------------------------------
+      # Static security/compliance scanning — runs against the raw HCL, so it
+      # needs no Azure/GitHub auth and can run before `terraform init`.
+      #
+      # soft_fail / exit-code: '0' below means findings are printed to the job
+      # log but never fail the job. This repo's AKS config makes several
+      # deliberate dev-tier cost trade-offs (Free SKU, kubenet, no private
+      # cluster, no disk encryption set, etc. — see ../../gitops/terraform/README.md
+      # "Cost estimate") that checkov/trivy flag as findings but which are not
+      # bugs. Flip these to blocking only after adding an explicit skip-list
+      # for the known/intentional findings, otherwise every run "fails" on
+      # things this project has already decided not to fix.
+      # ---------------------------------------------------------------------
+      - name: Checkov scan (report-only)
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: gitops/terraform/github
+          framework: terraform
+          soft_fail: true
+
+      - name: Trivy config scan (report-only)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: config
+          scan-ref: gitops/terraform/github
+          exit-code: "0"
+
       - name: Terraform Init
         run: terraform init
         env:
@@ -274,6 +301,22 @@ jobs:
 
       - name: Terraform fmt check
         run: terraform fmt -check -recursive
+
+      # Report-only — see the matching step in terraform-github-plan above
+      # for why these don't fail the job.
+      - name: Checkov scan (report-only)
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: gitops/terraform/infra
+          framework: terraform
+          soft_fail: true
+
+      - name: Trivy config scan (report-only)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: config
+          scan-ref: gitops/terraform/infra
+          exit-code: "0"
 
       - name: Terraform Init
         run: terraform init

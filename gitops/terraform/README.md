@@ -62,11 +62,17 @@ Both `github/` and `infra/` follow the same file layout:
 | Resource | Details |
 |----------|---------|
 | `azurerm_resource_group` | `rg-space-taco-<env>` in `var.location` |
-| `azurerm_kubernetes_cluster` | `aks-space-taco-<env>` — Free tier control plane, kubenet, workload identity + OIDC issuer enabled, Web App Routing addon with `autoaaron.xyz` DNS zone wired, Istio service mesh add-on (`service_mesh_profile`) enabled |
+| `azurerm_kubernetes_cluster` | `aks-space-taco-<env>` — Free tier control plane, **Azure CNI Overlay** networking, workload identity + OIDC issuer enabled, Web App Routing addon with `autoaaron.xyz` DNS zone wired, Istio service mesh add-on (`service_mesh_profile`) enabled. `default_node_pool.temporary_name_for_rotation` is set so changing `aks_node_vm_size` rotates the system pool instead of destroying the whole cluster (see "Swap to x86 if ARM is unavailable" below) |
 | `azurerm_kubernetes_cluster_node_pool` | `apps` user pool (1 node) — hosts Flux, Kyverno, and the space-taco application; separated from the system pool so AKS infrastructure and app workloads never compete |
 | `azurerm_role_assignment.external_dns_contributor` | Grants **DNS Zone Contributor** on `rg-management` to the **web app routing managed identity** (`web_app_routing[0].web_app_routing_identity[0].object_id`) — this is the MSI that the AKS-managed `external-dns` pod authenticates with; it is distinct from `kubelet_identity` |
 | `null_resource.istio_cni_chaining` (`istio.tf`) | One-time `az aks mesh proxy-redirection-mechanism` CLI call — see "Istio service mesh add-on" below for why this can't be a native Terraform resource yet |
 | `flux_bootstrap_git` | Installs Flux v2 controllers into the cluster and commits bootstrap manifests to `gitops/flux/flux-system/` |
+
+### Pod networking — Azure CNI Overlay
+
+`network_profile` in `aks.tf` uses **Azure CNI Overlay** (`network_plugin = "azure"`, `network_plugin_mode = "overlay"`), not kubenet. Pod IPs come from `pod_cidr` (`10.244.0.0/16`), a private range that isn't routable on the VNet — same address-space benefit as kubenet, but via the modern CNI dataplane instead of per-node UDRs, which scales further and supports Network Policy enforcement (not currently enabled here, but available without a cluster rebuild if needed later).
+
+**`network_plugin` and `network_plugin_mode` are Day-0, force-new settings** — there is no in-place migration between kubenet/CNI/Overlay. Changing either on an existing cluster makes Terraform destroy and recreate the entire `azurerm_kubernetes_cluster.this` resource (losing the Flux bootstrap state, node pools, and public IP association in the process), not just reconfigure networking. Plan carefully before applying a change here against a live cluster.
 
 ### Istio service mesh add-on
 
@@ -197,6 +203,12 @@ config — Terraform auto-loads it for both local runs and CI.
 | `azure_client_id` | `github` | Azure App Registration client ID for OIDC auth (stored as a repo secret, not used by the `github` provider itself) | Yes |
 | `azure_tenant_id` | `github` | Azure tenant ID (stored as a repo secret) | Yes |
 | `azure_subscription_id` | both | Azure subscription ID — used by the `azurerm` provider in `infra/`, and stored as a repo secret by `github/` | Yes |
+
+### Static security/compliance scanning
+
+Both `terraform-github-plan` and `terraform-infra-plan` (in `terraform.yml`) run `checkov` and `trivy config` against their module's HCL before `terraform init`. Both are **report-only** (`soft_fail` / `exit-code: "0"`) — findings are printed to the job log but never fail the build.
+
+This is deliberate, not a placeholder: this cluster makes several intentional dev-tier cost trade-offs (Free SKU instead of Standard, kubenet instead of Azure CNI, no private cluster / API server IP ranges, no disk encryption set — see "Cost estimate" above) that both scanners flag as findings. Making the step blocking today would fail every run on things this project has already decided not to fix. To promote it to a blocking gate later, add an explicit skip-list for the known/intentional findings first (e.g. a `.checkov.yaml` with `skip-check` entries), then drop `soft_fail`/`exit-code`.
 
 ### Local development
 
