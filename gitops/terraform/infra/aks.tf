@@ -28,15 +28,38 @@ resource "azurerm_kubernetes_cluster" "this" {
     os_disk_type         = "Managed"
     auto_scaling_enabled = false
 
+    # Without this, the azurerm provider treats vm_size (and zones) on the
+    # default_node_pool as force-new: changing aks_node_vm_size in
+    # terraform.tfvars (see ../README.md "Swap to x86 if ARM is unavailable")
+    # would destroy and recreate the ENTIRE cluster, not just the pool. With
+    # it set, Terraform spins up a temporary pool under this name, migrates
+    # workloads, then deletes the old one — a non-disruptive in-place resize.
+    # The name just needs to be unused and ≤ 12 chars; it only exists transiently
+    # during a resize and is never referenced anywhere else.
+    temporary_name_for_rotation = "systemtmp"
+
     upgrade_settings {
       max_surge = "1"
     }
   }
 
   network_profile {
-    network_plugin    = "kubenet"
-    load_balancer_sku = "standard"
-    outbound_type     = "loadBalancer"
+    # Azure CNI Overlay: pod IPs come from pod_cidr (below), a private range
+    # that's NOT routable on the VNet — unlike "vanilla" Azure CNI, which
+    # assigns pods real VNet IPs and burns through subnet address space fast.
+    # kubenet (the previous setting) gave the same "private pod range" benefit
+    # but does so via per-node UDRs, which don't scale past ~400 nodes and
+    # don't support Network Policy enforcement at the dataplane. Overlay is
+    # the modern replacement for kubenet for exactly that reason.
+    #
+    # network_plugin and network_plugin_mode are both Day-0 / force-new
+    # settings on azurerm_kubernetes_cluster — changing either one after the
+    # cluster exists destroys and recreates the whole cluster, not just a
+    # node pool. There is no in-place migration path.
+    network_plugin      = "azure"
+    network_plugin_mode = "overlay"
+    load_balancer_sku   = "standard"
+    outbound_type       = "loadBalancer"
     # These CIDRs must not overlap with each other or any peered VNet.
     pod_cidr       = "10.244.0.0/16"
     service_cidr   = "10.0.0.0/16"

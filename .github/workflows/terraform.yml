@@ -113,6 +113,33 @@ jobs:
       - name: Terraform fmt check
         run: terraform fmt -check -recursive
 
+      # ---------------------------------------------------------------------
+      # Static security/compliance scanning — runs against the raw HCL, so it
+      # needs no Azure/GitHub auth and can run before `terraform init`.
+      #
+      # soft_fail / exit-code: '0' below means findings are printed to the job
+      # log but never fail the job. This repo's AKS config makes several
+      # deliberate dev-tier cost trade-offs (Free SKU, kubenet, no private
+      # cluster, no disk encryption set, etc. — see ../../gitops/terraform/README.md
+      # "Cost estimate") that checkov/trivy flag as findings but which are not
+      # bugs. Flip these to blocking only after adding an explicit skip-list
+      # for the known/intentional findings, otherwise every run "fails" on
+      # things this project has already decided not to fix.
+      # ---------------------------------------------------------------------
+      - name: Checkov scan (report-only)
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: gitops/terraform/github
+          framework: terraform
+          soft_fail: true
+
+      - name: Trivy config scan (report-only)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: config
+          scan-ref: gitops/terraform/github
+          exit-code: "0"
+
       - name: Terraform Init
         run: terraform init
         env:
@@ -275,6 +302,22 @@ jobs:
       - name: Terraform fmt check
         run: terraform fmt -check -recursive
 
+      # Report-only — see the matching step in terraform-github-plan above
+      # for why these don't fail the job.
+      - name: Checkov scan (report-only)
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: gitops/terraform/infra
+          framework: terraform
+          soft_fail: true
+
+      - name: Trivy config scan (report-only)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: config
+          scan-ref: gitops/terraform/infra
+          exit-code: "0"
+
       - name: Terraform Init
         run: terraform init
         env:
@@ -286,11 +329,56 @@ jobs:
       - name: Terraform Validate
         run: terraform validate
 
+      # ---------------------------------------------------------------------
+      # Bootstrap edge case: flux_bootstrap_git's provider config reads
+      # kube_config off azurerm_kubernetes_cluster.this. When the cluster
+      # doesn't exist yet (true from-scratch build — e.g. disaster recovery,
+      # or the very first-ever apply), that value is unknown at plan time and
+      # the flux provider errors immediately ("Kubernetes Client: invalid
+      # configuration") instead of deferring, which aborts the whole plan.
+      # This has never surfaced before because flux.tf (commit cb34380) was
+      # only ever introduced onto a state where the cluster already existed —
+      # this repo had never actually planned the cluster + Flux together from
+      # an empty state until now.
+      #
+      # The fix is the standard two-phase workaround for this flux-provider
+      # limitation: if the full plan fails on exactly this error, fall back
+      # to a plan that -targets everything EXCEPT flux_bootstrap_git. That
+      # plan can succeed and is fully reviewable/appliable on its own. Once
+      # applied, the cluster (and its kube_config) exists, so the NEXT run of
+      # this workflow (next push to main, or a workflow_dispatch) will plan
+      # flux_bootstrap_git normally — no special-casing needed for that pass.
+      #
+      # If you add/rename a resource in this module other than
+      # flux_bootstrap_git, update the -target list below to match.
+      # ---------------------------------------------------------------------
       - name: Terraform Plan
         id: plan
         run: |
+          set +o pipefail
           terraform plan -no-color -out=tfplan 2>&1 | tee plan_output.txt
-          echo "exitcode=$?" >> $GITHUB_OUTPUT
+          plan_exitcode=${PIPESTATUS[0]}
+
+          if [ "$plan_exitcode" -ne 0 ] \
+            && grep -q "flux_bootstrap_git" plan_output.txt \
+            && grep -qi "Kubernetes Client" plan_output.txt; then
+            echo "::warning::Full plan failed because flux_bootstrap_git needs a live cluster that doesn't exist yet (from-scratch bootstrap). Falling back to a targeted plan that creates everything except Flux; re-run this workflow after it's applied to bootstrap Flux in a second pass."
+            echo "bootstrap_mode=true" >> "$GITHUB_OUTPUT"
+
+            terraform plan -no-color \
+              -target=azurerm_resource_group.aks \
+              -target=azurerm_kubernetes_cluster.this \
+              -target=azurerm_kubernetes_cluster_node_pool.apps \
+              -target=azurerm_public_ip.ingress \
+              -target=azurerm_role_assignment.external_dns_contributor \
+              -target=null_resource.istio_cni_chaining \
+              -out=tfplan 2>&1 | tee plan_output.txt
+            plan_exitcode=${PIPESTATUS[0]}
+          else
+            echo "bootstrap_mode=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "exitcode=$plan_exitcode" >> "$GITHUB_OUTPUT"
         env:
           # Non-sensitive AKS/Flux config (location, environment, node size/count)
           # comes from the committed gitops/terraform/infra/terraform.tfvars,
@@ -318,11 +406,19 @@ jobs:
             const truncated = plan.length > maxLen
               ? plan.slice(0, maxLen) + '\n...[truncated]'
               : plan;
+            // bootstrap_mode is set by the Terraform Plan step above when the
+            // full plan failed on flux_bootstrap_git needing a not-yet-created
+            // cluster and it fell back to a -target plan (see that step's
+            // comment for why). Flagging it here so a reviewer approving this
+            // apply knows Flux isn't included and a second run is required.
+            const bootstrapNote = '${{ steps.plan.outputs.bootstrap_mode }}' === 'true'
+              ? '\n\n⚠️ **Bootstrap mode**: the cluster doesn\'t exist yet, so this plan creates everything *except* `flux_bootstrap_git` (its provider needs a live `kube_config`). Re-run this workflow after this applies to bootstrap Flux in a second pass.'
+              : '';
             github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `## 🌮 Terraform Plan — infra\n\`\`\`hcl\n${truncated}\n\`\`\``
+              body: `## 🌮 Terraform Plan — infra${bootstrapNote}\n\`\`\`hcl\n${truncated}\n\`\`\``
             });
 
   # ---------------------------------------------------------------------------

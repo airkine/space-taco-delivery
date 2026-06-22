@@ -28,9 +28,33 @@ resource "null_resource" "istio_cni_chaining" {
     revision = local.istio_revision
   }
 
+  # `az aks mesh proxy-redirection-mechanism` is NOT idempotent: it exits
+  # non-zero with "Proxy redirection mechanism is already set to
+  # 'CNIChaining' for this cluster" if the mechanism is already correct (hit
+  # when Terraform recreates this null_resource — e.g. after the first
+  # attempt failed on AKSOperationPreempted but the CLI call had actually
+  # gone through, or any time this resource is tainted/replaced). Treat that
+  # specific message as success; let every other failure still fail the apply.
   provisioner "local-exec" {
-    command = "az aks mesh proxy-redirection-mechanism --resource-group ${azurerm_resource_group.aks.name} --name ${azurerm_kubernetes_cluster.this.name} --mechanism CNIChaining"
+    interpreter = ["bash", "-c"]
+    command     = <<-EOT
+      set -uo pipefail
+      output=$(az aks mesh proxy-redirection-mechanism --resource-group ${azurerm_resource_group.aks.name} --name ${azurerm_kubernetes_cluster.this.name} --mechanism CNIChaining 2>&1)
+      status=$?
+      echo "$output"
+      if [ $status -ne 0 ] && ! echo "$output" | grep -q "already set to 'CNIChaining'"; then
+        exit $status
+      fi
+      exit 0
+    EOT
   }
 
-  depends_on = [azurerm_kubernetes_cluster.this]
+  # AKS only allows one control-plane-level operation in flight per cluster
+  # at a time. Without also depending on the node pool, Terraform runs this
+  # az aks mesh call in parallel with azurerm_kubernetes_cluster_node_pool.apps's
+  # creation (both only depend on the cluster itself) and Azure rejects the
+  # mesh call with AKSOperationPreempted — hit on a from-scratch apply where
+  # the node pool creation was still in flight. Depending on the node pool
+  # too forces this to run strictly after it.
+  depends_on = [azurerm_kubernetes_cluster.this, azurerm_kubernetes_cluster_node_pool.apps]
 }
