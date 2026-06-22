@@ -18,6 +18,12 @@
 #     ingress.annotations["cert-manager.io/cluster-issuer"]
 #   - certificate-istio-gateway-tls.yaml's spec.issuerRef.name (this file's
 #     sibling)
+#
+# Done — both consumers now point at letsencrypt-prod (taco-delivery.autoaaron.xyz
+# carries a browser-trusted cert as of 2026-06-22). This ClusterIssuer (and
+# its ACME account key) is left in place rather than deleted: it's the
+# fastest rollback if production issuance ever breaks, and it's the right
+# starting point for any *new* hostname this repo adds later.
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:

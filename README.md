@@ -223,24 +223,21 @@ aks-istio-ingressgateway-external -n aks-istio-ingress` and curl it with a
 
 ### TLS on AKS
 
-Both AKS entry points terminate HTTPS with a free Let's Encrypt certificate,
-issued and auto-renewed by [cert-manager](https://cert-manager.io/) — see
-[`gitops/terraform/README.md`](gitops/terraform/README.md#tls--cert-manager--lets-encrypt)
+Both AKS entry points terminate HTTPS with a free, browser-trusted Let's
+Encrypt certificate, issued and auto-renewed by
+[cert-manager](https://cert-manager.io/) via the production ClusterIssuer —
+see [`gitops/terraform/README.md`](gitops/terraform/README.md#tls--cert-manager--lets-encrypt)
 for the full picture (why Let's Encrypt over an Azure-native option, how the
 two Flux Kustomizations in `gitops/flux/cert-manager*` are ordered, and the
-staging→production promotion steps).
+staging→production promotion that already happened).
 
 ```bash
 # Web App Routing Ingress
 curl https://taco-delivery.autoaaron.xyz/healthz
 
 # Istio Gateway (reached by IP + Host header, same as the plain-HTTP example above)
-curl -k -H "Host: taco-delivery.autoaaron.xyz" "https://${GATEWAY_IP}/healthz"
+curl -H "Host: taco-delivery.autoaaron.xyz" "https://${GATEWAY_IP}/healthz"
 ```
-
-Currently issued via the **staging** ClusterIssuer while the chain is being
-validated end to end — expect an untrusted-certificate warning (hence `-k`
-above) until it's promoted to `letsencrypt-prod`.
 
 ## GitHub Repo Bootstrap (Terraform)
 
