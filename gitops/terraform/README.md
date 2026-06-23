@@ -63,7 +63,7 @@ Both `github/` and `infra/` follow the same file layout:
 |----------|---------|
 | `azurerm_resource_group` | `rg-space-taco-<env>` in `var.location` |
 | `azurerm_kubernetes_cluster` | `aks-space-taco-<env>` — Free tier control plane, **Azure CNI Overlay** networking, workload identity + OIDC issuer enabled, Web App Routing addon with `autoaaron.xyz` DNS zone wired, Istio service mesh add-on (`service_mesh_profile`) enabled. `default_node_pool.temporary_name_for_rotation` is set so changing `aks_node_vm_size` rotates the system pool instead of destroying the whole cluster (see "Swap to x86 if ARM is unavailable" below) |
-| `azurerm_kubernetes_cluster_node_pool` | `apps` user pool (1 node) — hosts Flux, Kyverno, and the space-taco application; separated from the system pool so AKS infrastructure and app workloads never compete |
+| `azurerm_kubernetes_cluster_node_pool` | `apps` user pool — hosts Flux, Kyverno, cert-manager, istiod, and the space-taco application; separated from the system pool so AKS infrastructure and app workloads never compete. Sized via the independent `aks_apps_node_vm_size` variable (not `aks_node_vm_size`) — see "Cost estimate" below. Also carries `temporary_name_for_rotation` for the same reason as `default_node_pool`, since changing its `vm_size` is force-new |
 | `azurerm_role_assignment.external_dns_contributor` | Grants **DNS Zone Contributor** on `rg-management` to the **web app routing managed identity** (`web_app_routing[0].web_app_routing_identity[0].object_id`) — this is the MSI that the AKS-managed `external-dns` pod authenticates with; it is distinct from `kubelet_identity` |
 | `null_resource.istio_cni_chaining` (`istio.tf`) | One-time `az aks mesh proxy-redirection-mechanism` CLI call — see "Istio service mesh add-on" below for why this can't be a native Terraform resource yet |
 | `flux_bootstrap_git` | Installs Flux v2 controllers into the cluster and commits bootstrap manifests to `gitops/flux/flux-system/` |
@@ -184,12 +184,12 @@ the namespace the `Gateway` resource happens to live in. See
 
 ## Node pool architecture
 
-Two node pools keep AKS infrastructure and application workloads on separate nodes:
+Two node pools keep AKS infrastructure and application workloads on separate nodes, **with different VM SKUs** — see "Cost estimate" below for why they're no longer the same size:
 
-| Pool | Name | Mode | Nodes | Workloads |
-|------|------|------|-------|-----------|
-| System | `system` | `System` | 1 | CoreDNS, konnectivity-agent, azure-cni (AKS-managed) |
-| User | `apps` | `User` | 1 | Flux controllers, Kyverno, space-taco |
+| Pool | Name | Mode | Nodes | SKU | Workloads |
+|------|------|------|-------|-----|-----------|
+| System | `system` | `System` | 1 | `Standard_B2pls_v2` (2 vCPU / 4 GiB) | CoreDNS, konnectivity-agent, azure-cni (AKS-managed) |
+| User | `apps` | `User` | 2 | `Standard_B2ms` (2 vCPU / 8 GiB) | Flux controllers, Kyverno, cert-manager, istiod, space-taco |
 
 AKS automatically labels every user-pool node with `kubernetes.azure.com/mode: user`. All application deployments carry `nodeSelector: kubernetes.azure.com/mode: user` to target this pool explicitly.
 
@@ -198,30 +198,47 @@ AKS automatically labels every user-pool node with `kubernetes.azure.com/mode: u
 | Component | Monthly cost |
 |-----------|-------------|
 | AKS control plane (Free tier) | $0 |
-| 1× system node `Standard_B2pls_v2` (ARM64, 2 vCPU / 4 GiB) | ~$17 |
-| 3× user node `Standard_B2pls_v2` (ARM64, 2 vCPU / 4 GiB) | ~$51 |
-| OS disks (4× 30 GB managed) | ~$8 |
+| 1× system node `Standard_B2pls_v2` (ARM64, 2 vCPU / 4 GiB) | ~$25 |
+| 2× apps node `Standard_B2ms` (x86, 2 vCPU / 8 GiB) | ~$121 |
+| OS disks (3× 30 GB managed) | ~$6 |
 | Standard Load Balancer (egress) | ~$18 |
 | Istio external ingress gateway public IP (Standard) | ~$4 |
 | Terraform state storage (existing) | ~$1 |
 | cert-manager (controller/webhook/cainjector pods) | $0 — runs on existing nodes |
 | Let's Encrypt certificates (Web App Routing + Istio Gateway) | $0 — free, auto-renewing |
-| **Total** | **~$99/month** |
+| **Total** | **~$175/month** |
 
-The user/apps pool runs 3 nodes, not 1: Kyverno 3.8.1's 4 controller
-deployments + 2 `istiod` replicas + Flux's 4 controllers need more combined
-CPU/memory *request* headroom than a single 2-vCPU/4GiB node has. 1 node
-left zero CPU headroom (`FailedScheduling: Insufficient cpu`); 2 nodes
-shifted the same failure to memory (the second node hit 99% memory
-requests). 3 nodes gives enough combined headroom across the pool — see the
-AKS troubleshooting table below.
+**The apps pool runs a bigger VM SKU, not more nodes of the same one — this
+was a real production incident, not a preemptive choice.** `istiod` (the
+AKS-managed Istio add-on's control plane) requests 2Gi memory per replica
+(2 replicas; not tunable via Helm/Terraform — see "Istio service mesh
+add-on" above). On `Standard_B2pls_v2` (2 vCPU / 4 GiB), mandatory per-node
+platform daemonsets (CNI, CSI drivers, kube-proxy, metrics, etc.) consume
+~1.1Gi of the ~2.79Gi allocatable, leaving a **hard ceiling of ~1.68Gi free
+per node** — under istiod's 2Gi ask, regardless of node count. This was
+discovered when scaling `aks_user_node_count` 3→4 on `Standard_B2pls_v2`
+(an attempted fix for an unrelated capacity squeeze) didn't let istiod
+reschedule after both replicas were torn down simultaneously, took the
+sidecar-injection webhook down, and broke `space-taco` in production —
+`FailedCreate` on its ReplicaSets with `no endpoints available for service
+"istiod-asm-1-28"`. `Standard_B2ms` (2 vCPU / 8 GiB, ~$60/month) is the
+cheapest SKU with enough per-node headroom — cheaper than even the ARM
+`Standard_B4pls_v2` (4 vCPU / 8 GiB, ~$87/month) for the same memory. With
+the per-node ceiling no longer binding, node count actually *drops* from 3
+to 2: istiod's 2 replicas (anti-affinity-separated onto different nodes)
+each get a node to themselves, with Kyverno/cert-manager/Flux/the app
+spread across both and real headroom to spare. See `aks_apps_node_vm_size`
+in `variables.tf` for the full math, and the troubleshooting table below
+for the exact symptom.
 
 ### Swap to x86 if ARM is unavailable
 
 ```hcl
 # infra/terraform.tfvars
-aks_node_vm_size = "Standard_B2s"   # ~$35/month per node → ~$140/month total (1 system + 3 user)
+aks_node_vm_size = "Standard_B2s"   # system pool only — ~$35/month instead of ~$25/month
 ```
+
+(`aks_apps_node_vm_size` is already x86 — `Standard_B2ms` — so the apps pool needs no change for ARM unavailability.)
 
 ### Cut costs further: stop the cluster when not in use
 
@@ -255,7 +272,8 @@ config — Terraform auto-loads it for both local runs and CI.
 | `github_owner` | both | GitHub org or username | No |
 | `location` | `infra` | Azure region (default: `eastus2`) | No |
 | `environment` | `infra` | Environment label appended to resource names (default: `dev`) | No |
-| `aks_node_vm_size` | `infra` | VM SKU for the node pools | No |
+| `aks_node_vm_size` | `infra` | VM SKU for the system pool only | No |
+| `aks_apps_node_vm_size` | `infra` | VM SKU for the apps pool only — deliberately decoupled from the system pool's SKU, see "Cost estimate" above | No |
 | `aks_node_count` / `aks_user_node_count` | `infra` | Node counts per pool | No |
 | `kubernetes_version` | `infra` | Kubernetes minor version to pin to, or `null` for latest | No |
 
@@ -421,6 +439,7 @@ curl -H "Host: taco-delivery.autoaaron.xyz" "http://${GATEWAY_IP}/healthz"
 | Kyverno HelmRelease stuck `InstallFailed`/`Stalled (RetriesExceeded)`; `kubectl get events -n kyverno` shows `FailedScheduling: Insufficient cpu` or `Insufficient memory` | Kyverno's 4 controller deployments at chart-default resource *requests* (~410m CPU / ~384Mi memory total) + 2 `istiod` replicas + Flux's 4 controllers + per-node AKS/Istio daemonsets left no scheduling headroom on small `Standard_B2pls_v2` nodes. Growing `aks_user_node_count` from 1→2→3 kept shifting which single pod was unschedulable (CPU, then memory, then one pod short again) instead of resolving it — each additional tiny node also adds its own daemonset overhead, so node count alone has diminishing returns | Fixed at the root cause: `kustomization-kyverno.yaml`'s `values` now overrides each controller's resource *requests* down to 5-20m CPU / 32-64Mi memory (limits untouched — this only lowers what the scheduler reserves up front, not the usable ceiling). Check `kubectl describe nodes \| grep -A5 "Allocated resources"` before assuming a node-count fix will help. If the HelmRelease is `Stalled (RetriesExceeded)`, a values/capacity fix alone won't restart it — suspend/resume (`kubectl patch helmrelease kyverno -n kyverno --type=merge -p '{"spec":{"suspend":true}}'` then `false`) to reset the retry counter; if the prior install never succeeded even once, also delete its `sh.helm.release.v1.kyverno.v*` secrets in the `kyverno` namespace first so Flux treats it as a fresh install instead of an upgrade with `MissingRollbackTarget`. |
 | `Certificate` stuck `Pending`; `kubectl describe` shows a `cm-acme-http-solver-*` pod `Forbidden` by admission | The ACME HTTP-01 self-check pod for the Ingress-driven certificate is created in the `space-taco` namespace (same namespace as the Certificate/Ingress that requested it — cert-manager always does this, not configurable), making it subject to `space-taco-pod-security`'s rules (`gitops/charts/space-taco/templates/kyverno-policies.yaml`), which match every Pod in that namespace unconditionally. cert-manager ≥1.16 (pinned in `helmrelease-cert-manager.yaml`) already hardens the solver pod's default `securityContext` to satisfy this (`cert-manager/cert-manager#6462`), so this shouldn't trigger — but if a future chart bump or custom `podTemplate` regresses it | Add an `exclude` block (matching label `acme.cert-manager.io/http01-solver: "true"`) to each rule in `space-taco-pod-security`, the same narrowly-scoped-exception pattern used for the Istio CNI-chaining fix above — don't disable the policy outright |
 | `ClusterIssuer`/`Certificate` exists but no `Secret` appears after several minutes | `kubectl describe challenge -A` — almost always either (a) DNS for the requested hostname doesn't point at the Web App Routing ingress IP yet (external-dns lag, or a stale record), or (b) the temporary self-check `Ingress` cert-manager creates isn't using `ingressClassName: webapprouting.kubernetes.azure.com` because a `ClusterIssuer` was hand-edited without it | Confirm `dig taco-delivery.autoaaron.xyz` resolves to the same IP as `kubectl get svc -n app-routing-system` (or wherever Web App Routing's controller Service lives), and that both ClusterIssuers in `gitops/flux/cert-manager-issuers/` still set `solvers[0].http01.ingress.ingressClassName` |
+| `istiod-*` pods stuck `Pending` (`0/N nodes are available: ... Insufficient memory`); `space-taco` ReplicaSets `FailedCreate` with `no endpoints available for service "istiod-asm-1-28"`; site returns 503 | Each `Standard_B2pls_v2` node has a hard ceiling of ~1.68Gi free memory after mandatory platform daemonsets — under istiod's 2Gi-per-replica request, **no matter how many nodes of that SKU exist**. Hit in production after cert-manager's pods ate the last of a 3-node pool's margin; scaling node *count* further (3→4) did not help, as expected once you know it's a per-node ceiling, not an aggregate one | Fixed at the root cause: `aks_apps_node_vm_size` (`variables.tf`) sizes the apps pool independently of the system pool, now `Standard_B2ms` (8 GiB) — see "Cost estimate" above for the full math. Mid-incident, `az aks mesh disable-ingress-gateway` / `enable-ingress-gateway` (to try forcing re-reconciliation of an unrelated stuck add-on) made this *worse* by tearing down both istiod replicas at once instead of one at a time — avoid that command while istiod is already degraded. A temporary extra node pool (`az aks nodepool add --node-vm-size Standard_B2ms --node-count 1`) is the fastest live mitigation if this recurs before a Terraform apply can land; remove it only after the permanent pool resize is confirmed applied and istiod has rescheduled onto it. |
 
 ## Destroying infrastructure
 
