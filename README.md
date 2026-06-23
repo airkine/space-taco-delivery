@@ -197,6 +197,12 @@ behind one Service. An Istio `VirtualService`/`DestinationRule` sends 100% of
 traffic to `blueGreen.activeSlot` and 0% to the other slot — both run at full
 replica count the whole time, so a cutover is instant with no cold start.
 
+This is the quick local (Kind) version — for the full process, including
+the AKS/Flux-specific GitOps workflow (direct `helm upgrade` is wrong there
+— Flux owns the release), which image tags to actually use, and known
+caveats (the in-memory order store doesn't survive a cutover), see
+[`gitops/charts/space-taco/BLUEGREEN.md`](gitops/charts/space-taco/BLUEGREEN.md).
+
 ```bash
 # 1. Roll out a new version to the idle "green" slot — it receives 0% of
 #    traffic until you cut over, so this is safe to do live.
