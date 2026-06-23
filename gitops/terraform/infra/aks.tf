@@ -125,14 +125,29 @@ resource "azurerm_kubernetes_cluster" "this" {
 resource "azurerm_kubernetes_cluster_node_pool" "apps" {
   name                  = "apps"
   kubernetes_cluster_id = azurerm_kubernetes_cluster.this.id
-  vm_size               = var.aks_node_vm_size
-  node_count            = var.aks_user_node_count
-  mode                  = "User"
+  # Decoupled from the system pool's SKU — see aks_apps_node_vm_size's
+  # description for why this pool needs a larger-memory SKU than the
+  # system pool does (istiod's 2Gi-per-replica request doesn't fit
+  # Standard_B2pls_v2's per-node memory ceiling, no matter the node count).
+  vm_size    = var.aks_apps_node_vm_size
+  node_count = var.aks_user_node_count
+  mode       = "User"
 
   os_disk_size_gb = 30
   # Ephemeral disk requires VM cache ≥ OS disk size; B-series cache = 0, so use Managed.
   os_disk_type         = "Managed"
   auto_scaling_enabled = false
+
+  # Same rationale as default_node_pool's temporary_name_for_rotation in
+  # this same file: vm_size is force-new on this resource. Without this,
+  # changing aks_apps_node_vm_size would destroy and recreate the ENTIRE
+  # apps pool in one shot — taking Flux, Kyverno, cert-manager, istiod, and
+  # the application down simultaneously, the same class of self-inflicted
+  # outage this variable split was added to fix in the first place. With it
+  # set, Terraform spins up a temporary pool, migrates workloads, then
+  # deletes the old one — a non-disruptive in-place resize. Name just needs
+  # to be unused and ≤ 12 chars.
+  temporary_name_for_rotation = "appstmp"
 
   upgrade_settings {
     max_surge = "1"

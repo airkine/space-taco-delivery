@@ -15,30 +15,44 @@ github_owner = "airkine"
 location    = "eastus2"
 environment = "dev"
 
-# VM SKU is shared by both the system and user node pools.
+# System pool SKU (AKS infrastructure only — CoreDNS, konnectivity, etc.).
 # Cost options (per node, always-on):
 #   Standard_B2s       ~$35/month  x86  — available in all regions (default)
-#   Standard_B2pls_v2  ~$17/month  ARM  — available in eastus2, westus2, westeurope
-# With system=1, apps=3 nodes:
-#   Standard_B2pls_v2 → ~$68/month total node cost
-#   Standard_B2s      → ~$140/month total node cost
+#   Standard_B2pls_v2  ~$25/month  ARM  — available in eastus2, westus2, westeurope
 aks_node_vm_size = "Standard_B2pls_v2"
 aks_node_count   = 1 # system pool — AKS infrastructure (CoreDNS, konnectivity, etc.)
-# user/apps pool — Flux, Kyverno, space-taco.
+
+# user/apps pool — Flux, Kyverno, cert-manager, istiod, space-taco.
 #
-# 1 node: Kyverno 3.8.1's 4 controller deployments + 2 istiod replicas +
-# Flux's 4 controllers left no CPU request headroom at all on a single
-# 2-vCPU node — kyverno-reports-controller stuck FailedScheduling
-# ("Insufficient cpu").
+# History of getting this pool's sizing wrong, in order:
 #
-# 2 nodes: still not enough — the new node hit 99% MEMORY requests instead
-# (B2pls_v2 is 2 vCPU / 4 GiB; istiod + Flux alone consume most of one
-# node's headroom), so kyverno-background-controller/-reports-controller
-# stayed Pending with the same FailedScheduling pattern, just memory- not
-# CPU-bound this time.
+# 1 node (Standard_B2pls_v2): Kyverno 3.8.1's 4 controller deployments + 2
+# istiod replicas + Flux's 4 controllers left no CPU request headroom at
+# all on a single 2-vCPU node — kyverno-reports-controller stuck
+# FailedScheduling ("Insufficient cpu").
 #
-# 3 nodes gives enough combined CPU+memory headroom across the pool for
-# Kyverno's 4 controllers to actually schedule alongside everything else.
-aks_user_node_count = 3
+# 2 nodes (Standard_B2pls_v2): still not enough — the new node hit 99%
+# MEMORY requests instead, so kyverno-background-controller/
+# -reports-controller stayed Pending with the same FailedScheduling
+# pattern, just memory- not CPU-bound this time.
+#
+# 3 nodes (Standard_B2pls_v2): enough combined CPU+memory headroom across
+# the pool for Kyverno's 4 controllers — but this was a count-vs-ceiling
+# coincidence, not a real fix: each Standard_B2pls_v2 node only has ~1.68Gi
+# free after mandatory platform daemonsets, a ceiling that no amount of
+# additional same-SKU nodes can cross. cert-manager (added later) ate the
+# last of that margin; the next pod that needed real memory (istiod, 2Gi
+# per replica) couldn't schedule on ANY node regardless of count, took the
+# sidecar-injection webhook down, and broke the application in production.
+#
+# Fix: aks_apps_node_vm_size (variables.tf) decouples this pool's SKU from
+# the system pool's and bumps it to Standard_B2ms (2 vCPU / 8 GiB) — see
+# that variable's description for the full memory-ceiling math. With
+# per-node headroom no longer the binding constraint, node count drops back
+# down: 2 nodes gives istiod's 2 replicas (anti-affinity-separated) a node
+# each, with everything else (Kyverno, cert-manager, Flux, the app) spread
+# across both with real headroom to spare.
+aks_user_node_count   = 2
+aks_apps_node_vm_size = "Standard_B2ms"
 
 kubernetes_version = null

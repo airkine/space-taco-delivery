@@ -50,10 +50,13 @@ variable "environment" {
 
 variable "aks_node_vm_size" {
   description = <<-EOT
-    VM SKU for both the system and user node pools (shared for dev simplicity).
+    VM SKU for the system node pool only (AKS infrastructure — CoreDNS,
+    konnectivity, etc.). See aks_apps_node_vm_size for the user/apps pool,
+    which has a much larger memory footprint and is intentionally sized
+    differently — see that variable's description for why.
 
     Cost-optimized options (single node, always-on):
-      Standard_B2pls_v2  ~$17/month  ARM64  — cheapest; requires eastus2 / westus2 / westeurope
+      Standard_B2pls_v2  ~$25/month  ARM64  — cheapest; requires eastus2 / westus2 / westeurope
       Standard_B2s       ~$35/month  x86_64 — available in all regions
 
     The app image is multi-arch (linux/amd64 + linux/arm64), so ARM is fine.
@@ -61,6 +64,31 @@ variable "aks_node_vm_size" {
   EOT
   type        = string
   default     = "Standard_B4pls_v2" # x86 default for broadest region availability
+}
+
+variable "aks_apps_node_vm_size" {
+  description = <<-EOT
+    VM SKU for the user/apps node pool (Flux, Kyverno, cert-manager, the
+    AKS-managed Istio add-on's istiod, and the space-taco application).
+
+    Deliberately decoupled from aks_node_vm_size (the system pool's SKU):
+    istiod alone requests 2Gi memory per replica (2 replicas, not
+    Helm/Terraform-tunable — it's entirely managed by the AKS Istio add-on,
+    see gitops/terraform/README.md "Istio service mesh add-on"). On
+    Standard_B2pls_v2 (2 vCPU / 4 GiB), mandatory per-node platform
+    daemonsets (CNI, CSI drivers, kube-proxy, metrics, etc.) consume ~1.1Gi
+    of the ~2.79Gi allocatable, leaving a hard ceiling of ~1.68Gi free per
+    node — under istiod's 2Gi requirement. This ceiling is per-NODE, so it
+    cannot be fixed by adding more nodes of the same SKU, only a larger SKU.
+    This was discovered the hard way: scaling aks_user_node_count 3→4 on
+    Standard_B2pls_v2 did not let istiod schedule and caused a real outage
+    (sidecar-injection webhook unreachable → space-taco pods failed to
+    create). Standard_B2ms (2 vCPU / 8 GiB, ~$60/month) is the cheapest SKU
+    with enough per-node memory headroom — cheaper than even the ARM
+    Standard_B4pls_v2 (4 vCPU / 8 GiB, ~$87/month) for the same memory.
+  EOT
+  type        = string
+  default     = "Standard_B2ms"
 }
 
 variable "aks_node_count" {
